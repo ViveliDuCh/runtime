@@ -15,6 +15,7 @@ public sealed class StringStream : Stream
     private readonly byte[] _byteBuffer;
     private int _byteBufferCount;
     private int _byteBufferPosition;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
@@ -41,7 +42,7 @@ public sealed class StringStream : Stream
     }
 
     /// <inheritdoc/>
-    public override bool CanRead => true;
+    public override bool CanRead => !_disposed;
 
     /// <inheritdoc/>
     public override bool CanSeek => false;
@@ -64,6 +65,9 @@ public sealed class StringStream : Stream
     /// <inheritdoc/>
     public override int Read(byte[] user_buffer, int offset, int count)
     {
+        ValidateBufferArguments(user_buffer, offset, count);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         int totalBytesRead = 0;
 
         while (totalBytesRead < count)
@@ -109,4 +113,11 @@ public sealed class StringStream : Stream
     // Not supported for String or ReadOnlyMemory scenarios
     /// <inheritdoc/>
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        _disposed = true;
+        base.Dispose(disposing);
+    }
 }

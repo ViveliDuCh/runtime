@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="StringStreamConformanceTests.cs" />
+    <Compile Include="StringStreamTests.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\src\System.IO.StreamExtensions.csproj" />
