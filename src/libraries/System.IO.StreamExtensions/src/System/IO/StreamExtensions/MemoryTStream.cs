@@ -54,7 +54,6 @@ public class MemoryTStream : Stream
         : this(buffer, buffer.Length, writable, publiclyVisible)
     { // Since the length is buffer.Length and the internal buffer's length shouldn't change
       // we can just always use buffer length. **Check to change the length parameter or if to keep it
-      // we can just always use buffer length. **Check to change the length parameter or if to keep it
       // If kept, then maybe the logical length is needed, or maybe just _position
     }
 

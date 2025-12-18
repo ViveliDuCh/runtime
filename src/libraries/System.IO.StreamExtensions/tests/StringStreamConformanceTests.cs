@@ -8,16 +8,14 @@ using Xunit;
 namespace System.IO.StreamExtensions.Tests;
 
 /// <summary>
-/// Conformance tests for StringStream - a read-only, non-seekable stream
+/// Conformance tests for StringStream - a read-only, seekable stream
 /// that encodes strings on-the-fly.
 /// </summary>
 public class StringStreamConformanceTests : StandaloneStreamConformanceTests
 {
     // StreamConformanceTests flags to specify capabilities of StringStream
-    protected override bool CanSeek => false; // these have deafult values, just for clarity
+    protected override bool CanSeek => true;
     protected override bool CanSetLength => false; // Immutalble stream
-    protected override bool CanGetPositionWhenCanSeekIsFalse => false;
-    protected override bool ReadsReadUntilSizeOrEof => true;
     protected override bool NopFlushCompletesSynchronously => true;
 
     /// <summary>
