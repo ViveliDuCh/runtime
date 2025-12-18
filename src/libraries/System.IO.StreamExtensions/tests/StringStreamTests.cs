@@ -11,6 +11,73 @@ namespace System.IO.StreamExtensions.Tests;
 /// </summary>
 public class StringStreamTests
 {
+    [Fact]
+    public async Task StringStream_SeekAndRead_WithMultiByteCharacters()
+    {
+        // Unicode characters with variable byte lengths in UTF-8
+        string input = "AB你好CD";
+        var stream = new StringStream(input, Encoding.UTF8);
+
+        byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
+
+        // Seek to middle of multi-byte sequence and verify correct reading
+        stream.Position = 2; // Start of '你'
+        byte[] buffer = new byte[3];
+        int bytesRead = await stream.ReadAsync(buffer);
+
+        Assert.Equal(3, bytesRead);
+        Assert.Equal(expectedBytes.AsSpan(2, 3).ToArray(), buffer);
+
+        // Seek backward and read again
+        stream.Position = 0;
+        buffer = new byte[2];
+        bytesRead = await stream.ReadAsync(buffer);
+
+        Assert.Equal(2, bytesRead);
+        Assert.Equal(expectedBytes.AsSpan(0, 2).ToArray(), buffer);
+    }
+
+    [Fact]
+    public async Task StringStream_PositionUpdatesCorrectlyAfterPartialReads()
+    {
+        string input = new string('X', 1000);
+        var stream = new StringStream(input, Encoding.UTF8);
+
+        Assert.Equal(0, stream.Position);
+
+        byte[] buffer = new byte[100];
+        await stream.ReadAsync(buffer);
+        Assert.Equal(100, stream.Position);
+
+        await stream.ReadAsync(buffer.AsMemory(0, 50));
+        Assert.Equal(150, stream.Position);
+
+        // Seek backward
+        stream.Position = 75;
+        Assert.Equal(75, stream.Position);
+
+        await stream.ReadAsync(buffer);
+        Assert.Equal(175, stream.Position);
+    }
+
+    [Fact]
+    public async Task StringStream_SeekBeyondInternalBufferBoundary()
+    {
+        // Create string larger than internal byte buffer (4096 bytes)
+        string input = new string('A', 5000);
+        var stream = new StringStream(input, Encoding.UTF8);
+
+        // Seek to position beyond first buffer
+        stream.Position = 4500;
+        Assert.Equal(4500, stream.Position);
+
+        byte[] buffer = new byte[100];
+        int bytesRead = await stream.ReadAsync(buffer);
+
+        Assert.Equal(100, bytesRead);
+        Assert.All(buffer, b => Assert.Equal((byte)'A', b));
+    }
+
     // Different inputs, same encoding
     [Theory]
     [InlineData("Hello, World! ")]
@@ -79,7 +146,7 @@ public class StringStreamTests
     public void StringStream_CanSeekPropertyReturnsFalse()
     {
         var stream = new StringStream("test");
-        Assert.False(stream.CanSeek);
+        Assert.True(stream.CanSeek);
     }
 
     [Fact]
@@ -90,24 +157,12 @@ public class StringStreamTests
     }
 
     [Fact]
-    public void StringStream_LengthThrowsNotSupportedException()
+    public void StringStream_LengthReturnsCorrectValue()
     {
-        var stream = new StringStream("test");
-        Assert.Throws<NotSupportedException>(() => stream.Length);
-    }
-
-    [Fact]
-    public void StringStream_PositionGetThrowsNotSupportedException()
-    {
-        var stream = new StringStream("test");
-        Assert.Throws<NotSupportedException>(() => stream.Position);
-    }
-
-    [Fact]
-    public void StringStream_SeekThrowsNotSupportedException()
-    {
-        var stream = new StringStream("test");
-        Assert.Throws<NotSupportedException>(() => stream.Seek(0, SeekOrigin.Begin));
+        var testString = "test";
+        var stream = new StringStream(testString);
+        var expectedLength = Encoding.UTF8.GetByteCount(testString);
+        Assert.Equal(expectedLength, stream.Length);
     }
 
     [Fact]
