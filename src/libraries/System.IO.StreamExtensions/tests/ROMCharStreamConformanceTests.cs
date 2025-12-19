@@ -13,10 +13,8 @@ namespace System.IO.StreamExtensions.Tests;
 public class ROMCharStreamConformanceTests : StandaloneStreamConformanceTests
 {
     // StreamConformanceTests flags to specify capabilities of ReadOnlyMemoryCharStream
-    protected override bool CanSeek => false; // these have deafult values, just for clarity
+    protected override bool CanSeek => true; // these have deafult values, just for clarity
     protected override bool CanSetLength => false; // Immutalble stream
-    protected override bool CanGetPositionWhenCanSeekIsFalse => false;
-    protected override bool ReadsReadUntilSizeOrEof => true;
     protected override bool NopFlushCompletesSynchronously => true;
 
     /// <summary>
