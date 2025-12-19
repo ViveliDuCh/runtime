@@ -143,7 +143,7 @@ public class StringStreamTests
     }
 
     [Fact]
-    public void StringStream_CanSeekPropertyReturnsFalse()
+    public void StringStream_CanSeekPropertyReturnsTrue()
     {
         var stream = new StringStream("test");
         Assert.True(stream.CanSeek);
@@ -244,5 +244,59 @@ public class StringStreamTests
 
         Assert.Equal(5, totalRead); // "small" = 5 bytes in UTF8
         Assert.Equal(0, finalRead);
+    }
+
+    [Fact]
+    public async Task StringStream_SequentialReadAsync_PositionUpdatesAfterEachRead()
+    {
+        string input = "ABCDEFGHIJKLMNOP";
+        var stream = new StringStream(input, Encoding.UTF8);
+        byte[] buffer = new byte[4];
+
+        Assert.Equal(0, stream.Position);
+
+        await stream.ReadAsync(buffer); // "ABCD"
+        Assert.Equal(4, stream.Position);
+
+        await stream.ReadAsync(buffer); // "EFGH"
+        Assert.Equal(8, stream.Position);
+
+        await stream.ReadAsync(buffer); // "IJKL"
+        Assert.Equal(12, stream.Position);
+
+        await stream.ReadAsync(buffer); // "MNOP"
+        Assert.Equal(16, stream.Position);
+
+        // Read at EOF should return 0
+        int eofRead = await stream.ReadAsync(buffer);
+        Assert.Equal(0, eofRead);
+        Assert.Equal(16, stream.Position); // Position stays at end
+    }
+
+    [Fact]
+    public async Task StringStream_SequentialReadAsync_WithSmallChunks_ReadsEntireStream()
+    {
+        string input = new string('A', 5000); // Larger than internal buffer
+        byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
+        var stream = new StringStream(input, Encoding.UTF8);
+
+        // Read sequentially in small chunks
+        byte[] actualBytes = new byte[expectedBytes.Length];
+        int totalBytesRead = 0;
+        int chunkSize = 128;
+
+        while (totalBytesRead < expectedBytes.Length)
+        {
+            int toRead = Math.Min(chunkSize, expectedBytes.Length - totalBytesRead);
+            int bytesRead = await stream.ReadAsync(actualBytes.AsMemory(totalBytesRead, toRead));
+
+            if (bytesRead == 0) break; // EOF
+
+            totalBytesRead += bytesRead;
+        }
+
+        Assert.Equal(expectedBytes.Length, totalBytesRead);
+        Assert.Equal(expectedBytes, actualBytes);
+        Assert.Equal(expectedBytes.Length, stream.Position);
     }
 }

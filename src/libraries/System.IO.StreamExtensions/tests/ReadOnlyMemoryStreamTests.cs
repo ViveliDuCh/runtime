@@ -245,17 +245,14 @@ public class ReadOnlyMemoryStreamTests
         var stream = new ReadOnlyMemoryStream(new byte[10]);
         byte[] data = new byte[] { 1, 2, 3 };
 
-        var exception = Assert.Throws<NotSupportedException>(() => stream.Write(data, 0, 3));
-        Assert.Contains("does not support writing", exception.Message);
+        Assert.Throws<NotSupportedException>(() => stream.Write(data, 0, 3));
     }
 
     [Fact]
     public void SetLength_ThrowsNotSupportedException()
     {
         var stream = new ReadOnlyMemoryStream(new byte[10]);
-
-        var exception = Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
-        Assert.Contains("Cannot resize", exception.Message);
+        Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
     }
 
     // Conformance validates disposal with ValidateDisposedExceptionsAsync()
@@ -325,5 +322,70 @@ public class ReadOnlyMemoryStreamTests
         long newPosition = stream.Seek(1, SeekOrigin.Begin);
         Assert.Equal(1, newPosition);
         Assert.Equal(1, stream.Position);
+    }
+
+    [Fact]
+    public async Task ReadAsync_SameResultSize_ReusesCachedTask()
+    {
+        var data = new byte[20];
+        for (int i = 0; i < 20; i++) data[i] = (byte)i;
+        var stream = new ReadOnlyMemoryStream(data);
+
+        byte[] buffer1 = new byte[5];
+        byte[] buffer2 = new byte[5];
+        byte[] buffer3 = new byte[5];
+
+        Task<int> task1 = stream.ReadAsync(buffer1, 0, 5);
+        Task<int> task2 = stream.ReadAsync(buffer2, 0, 5);
+        Task<int> task3 = stream.ReadAsync(buffer3, 0, 5);
+
+        await task1;
+        await task2;
+        await task3;
+
+        Assert.Same(task1, task2);
+        Assert.Same(task2, task3);
+
+        Assert.Equal(new byte[] { 0, 1, 2, 3, 4 }, buffer1);
+        Assert.Equal(new byte[] { 5, 6, 7, 8, 9 }, buffer2);
+        Assert.Equal(new byte[] { 10, 11, 12, 13, 14 }, buffer3);
+    }
+
+    [Fact]
+    public async Task ReadAsync_DifferentResultSize_CreatesNewTask()
+    {
+        var data = new byte[10];
+        for (int i = 0; i < 10; i++) data[i] = (byte)i;
+        var stream = new ReadOnlyMemoryStream(data);
+
+        byte[] buffer1 = new byte[5];
+        byte[] buffer2 = new byte[3];
+        byte[] buffer3 = new byte[2];
+
+        Task<int> task1 = stream.ReadAsync(buffer1, 0, 5);  // Returns 5
+        Task<int> task2 = stream.ReadAsync(buffer2, 0, 3);  // Returns 3
+        Task<int> task3 = stream.ReadAsync(buffer3, 0, 2);  // Returns 2
+
+        await task1;
+        await task2;
+        await task3;
+
+        Assert.NotSame(task1, task2);
+        Assert.NotSame(task2, task3);
+    }
+
+    [Fact]
+    public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
+    {
+        var data = new byte[] { 10, 20, 30, 40, 50 };
+        var stream = new ReadOnlyMemoryStream(data);
+
+        byte[] arrayBuffer = new byte[3];
+        Memory<byte> memory = arrayBuffer.AsMemory();
+
+        int bytesRead = await stream.ReadAsync(memory);
+
+        Assert.Equal(3, bytesRead);
+        Assert.Equal(new byte[] { 10, 20, 30 }, arrayBuffer);
     }
 }

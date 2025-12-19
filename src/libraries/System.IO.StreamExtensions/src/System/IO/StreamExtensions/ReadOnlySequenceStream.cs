@@ -2,6 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Buffers;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.IO.StreamExtensions;
 
@@ -11,10 +14,11 @@ namespace System.IO.StreamExtensions;
 // Seekable Stream from ReadOnlySequence<byte>
 public sealed class ReadOnlySequenceStream : Stream
 {
-    private ReadOnlySequence<byte> sequence;
-    private SequencePosition position;
+    private ReadOnlySequence<byte> _sequence;
+    private SequencePosition _position;
     private long _positionPastEnd; // -1 if within bounds, or the actual position if past end
     private bool _isDisposed;
+    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReadOnlySequenceStream"/> class over the specified <see cref="ReadOnlySequence{Byte}"/>.
@@ -22,8 +26,8 @@ public sealed class ReadOnlySequenceStream : Stream
     /// <param name="sequence">The <see cref="ReadOnlySequence{Byte}"/> to wrap.</param>
     public ReadOnlySequenceStream(ReadOnlySequence<byte> sequence)
     {
-        this.sequence = sequence;
-        this.position = sequence.Start;
+        _sequence = sequence;
+        _position = sequence.Start;
         _positionPastEnd = -1;
         _isDisposed = false;
     }
@@ -45,7 +49,7 @@ public sealed class ReadOnlySequenceStream : Stream
         get
         {
             EnsureNotDisposed();
-            return sequence.Length;
+            return _sequence.Length;
         }
     }
 
@@ -55,7 +59,7 @@ public sealed class ReadOnlySequenceStream : Stream
         get
         {
             EnsureNotDisposed();
-            return _positionPastEnd >= 0 ? _positionPastEnd : sequence.Slice(sequence.Start, position).Length;
+            return _positionPastEnd >= 0 ? _positionPastEnd : _sequence.Slice(_sequence.Start, _position).Length;
         }
         set
         {
@@ -65,15 +69,31 @@ public sealed class ReadOnlySequenceStream : Stream
             // Allow seeking past the end
             if (value >= Length)
             {
-                position = sequence.End;
+                _position = _sequence.End;
                 _positionPastEnd = value;
             }
             else
             {
-                position = sequence.GetPosition(value, sequence.Start);
+                _position = _sequence.GetPosition(value, _sequence.Start);
                 _positionPastEnd = -1;
             }
         }
+    }
+
+    /// <inheritdoc />
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        EnsureNotDisposed();
+
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
+        if ((ulong)(uint)offset + (uint)count > (uint)buffer.Length) {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        return Read(buffer.AsSpan(offset, count));
     }
 
     /// <inheritdoc />
@@ -86,7 +106,7 @@ public sealed class ReadOnlySequenceStream : Stream
             return 0;
         }
 
-        ReadOnlySequence<byte> remaining = sequence.Slice(position);
+        ReadOnlySequence<byte> remaining = _sequence.Slice(_position);
         int n = (int)Math.Min(remaining.Length, buffer.Length);
         if (n <= 0)
         {
@@ -94,26 +114,104 @@ public sealed class ReadOnlySequenceStream : Stream
         }
 
         remaining.Slice(0, n).CopyTo(buffer);
-        position = sequence.GetPosition(n, position);
+        _position = _sequence.GetPosition(n, _position);
         return n;
     }
 
-    /// <inheritdoc />
-    public override int Read(byte[] buffer, int offset, int count)
+    /// <inheritdoc/>
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
-        EnsureNotDisposed();
+        ValidateBufferArguments(buffer, offset, count);
 
-        ArgumentNullException.ThrowIfNull(buffer);
-        ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        // If cancellation was requested, bail early
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<int>(cancellationToken);
 
-        if ((ulong)(uint)offset + (uint)count > (uint)buffer.Length)
+        try
         {
-            throw new ArgumentOutOfRangeException(nameof(count));
+            int n = Read(buffer, offset, count);
+
+            // Try to reuse the cached task if it has the same result
+            Task<int>? lastReadTask = _lastReadTask;
+            if (lastReadTask != null && lastReadTask.Result == n)
+            {
+                return lastReadTask;
+            }
+
+            // Create a new task and cache it
+            Task<int> newTask = Task.FromResult(n);
+            _lastReadTask = newTask;
+            return newTask;
+        }
+        catch (OperationCanceledException oce)
+        {
+            return Task.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<int>(exception);
+        }
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<int>(cancellationToken);
         }
 
-        return Read(buffer.AsSpan(offset, count));
+        try
+        {
+
+            int bytesRead;
+            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                bytesRead = Read(array.Array!, array.Offset, array.Count);
+            }
+            else
+            {
+                // Slow path: rent a buffer, read, copy
+                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+                try
+                {
+                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
+                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rentedBuffer);
+                }
+            }
+
+            return new ValueTask<int>(bytesRead);
+        }
+        catch (OperationCanceledException oce)
+        {
+            return ValueTask.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromException<int>(exception);
+        }
     }
+
+    /// <inheritdoc />
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        EnsureNotDisposed();
+        throw new NotSupportedException();
+    }
+
+    /// <inheritdoc/>
+    public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     /// <summary>
     /// Sets the position within the current stream.
@@ -126,7 +224,7 @@ public sealed class ReadOnlySequenceStream : Stream
         EnsureNotDisposed();
 
         // Calculate absolute position
-        long currentPosition = _positionPastEnd >= 0 ? _positionPastEnd : sequence.Slice(sequence.Start, position).Length;
+        long currentPosition = _positionPastEnd >= 0 ? _positionPastEnd : _sequence.Slice(_sequence.Start, _position).Length;
         long absolutePosition = origin switch
         {
             SeekOrigin.Begin => offset,
@@ -144,12 +242,12 @@ public sealed class ReadOnlySequenceStream : Stream
         // Update position - seeking past end is allowed
         if (absolutePosition >= Length)
         {
-            position = sequence.End;
+            _position = _sequence.End;
             _positionPastEnd = absolutePosition;
         }
         else
         {
-            position = sequence.GetPosition(absolutePosition, sequence.Start);
+            _position = _sequence.GetPosition(absolutePosition, _sequence.Start);
             _positionPastEnd = -1;
         }
 
@@ -167,15 +265,9 @@ public sealed class ReadOnlySequenceStream : Stream
     }
 
     /// <inheritdoc />
-    public override void Write(byte[] buffer, int offset, int count)
-    {
-        EnsureNotDisposed();
-        throw new NotSupportedException();
-    }
-
-    /// <inheritdoc />
     protected override void Dispose(bool disposing)
     {
+        _lastReadTask = null;
         _isDisposed = true;
         base.Dispose(disposing);
     }

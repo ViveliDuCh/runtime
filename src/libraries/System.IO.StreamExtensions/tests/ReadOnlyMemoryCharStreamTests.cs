@@ -18,7 +18,7 @@ public class ReadOnlyMemoryCharStreamTests
         var stream = new ReadOnlyMemoryCharStream(chars);
 
         Assert.True(stream.CanRead);
-        Assert.False(stream.CanSeek);
+        Assert.True(stream.CanSeek);
         Assert.False(stream.CanWrite);
     }
 
@@ -202,39 +202,39 @@ public class ReadOnlyMemoryCharStreamTests
     // Conformance tests already cover a lot of unsupported behaviors
     // with ValidateMisuseExceptionsAsync()
     [Fact]
-    public void ReadOnlyMemoryCharStream_LengthThrowsNotSupportedException()
+    public void ReadOnlyMemoryCharStream_LengthSupported()
     {
         var chars = "test".AsMemory();
         var stream = new ReadOnlyMemoryCharStream(chars);
 
-        Assert.Throws<NotSupportedException>(() => stream.Length);
+        Assert.Equal(chars.Length, stream.Length);
     }
 
     [Fact]
-    public void ReadOnlyMemoryCharStream_PositionGetThrowsNotSupportedException()
+    public void ReadOnlyMemoryCharStream_PositionGetSupported()
     {
         var chars = "test".AsMemory();
         var stream = new ReadOnlyMemoryCharStream(chars);
 
-        Assert.Throws<NotSupportedException>(() => stream.Position);
+        Assert.Equal(0, stream.Position);
     }
 
     [Fact]
-    public void ReadOnlyMemoryCharStream_PositionSetThrowsNotSupportedException()
+    public void ReadOnlyMemoryCharStream_PositionSetSupported()
     {
         var chars = "test".AsMemory();
         var stream = new ReadOnlyMemoryCharStream(chars);
-
-        Assert.Throws<NotSupportedException>(() => stream.Position = 0);
+        stream.Position = 0;
+        Assert.Equal(0, stream.Position);
     }
 
     [Fact]
-    public void ReadOnlyMemoryCharStream_SeekThrowsNotSupportedException()
+    public void ReadOnlyMemoryCharStream_SeekSupported()
     {
         var chars = "test".AsMemory();
         var stream = new ReadOnlyMemoryCharStream(chars);
 
-        Assert.Throws<NotSupportedException>(() => stream.Seek(0, SeekOrigin.Begin));
+        Assert.Equal(0, stream.Seek(0, SeekOrigin.Begin));
     }
 
     [Fact]

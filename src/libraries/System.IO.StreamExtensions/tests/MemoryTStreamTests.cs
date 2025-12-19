@@ -427,4 +427,88 @@ public class MemoryTStreamTests
 
         Assert.Equal(new byte[] { 1, 2, 100, 101, 5, 6, 7 }, result);
     }
+
+    [Fact]
+    public async Task ReadAsync_SameResultSize_ReusesCachedTask()
+    {
+        var data = new byte[20];
+        for (int i = 0; i < 20; i++) data[i] = (byte)i;
+        var stream = new MemoryTStream(data, writable: false);
+
+        byte[] buffer1 = new byte[5];
+        byte[] buffer2 = new byte[5];
+        byte[] buffer3 = new byte[5];
+
+        Task<int> task1 = stream.ReadAsync(buffer1, 0, 5);
+        Task<int> task2 = stream.ReadAsync(buffer2, 0, 5);
+        Task<int> task3 = stream.ReadAsync(buffer3, 0, 5);
+
+        await task1;
+        await task2;
+        await task3;
+
+        Assert.Same(task1, task2);
+        Assert.Same(task2, task3);
+
+        Assert.Equal(new byte[] { 0, 1, 2, 3, 4 }, buffer1);
+        Assert.Equal(new byte[] { 5, 6, 7, 8, 9 }, buffer2);
+        Assert.Equal(new byte[] { 10, 11, 12, 13, 14 }, buffer3);
+    }
+
+    [Fact]
+    public async Task ReadAsync_DifferentResultSize_CreatesNewTask()
+    {
+        var data = new byte[10];
+        for (int i = 0; i < 10; i++) data[i] = (byte)i;
+        var stream = new MemoryTStream(data, writable: false);
+
+        byte[] buffer1 = new byte[5];
+        byte[] buffer2 = new byte[3];
+        byte[] buffer3 = new byte[2];
+
+        Task<int> task1 = stream.ReadAsync(buffer1, 0, 5);
+        Task<int> task2 = stream.ReadAsync(buffer2, 0, 3);
+        Task<int> task3 = stream.ReadAsync(buffer3, 0, 2);
+
+        await task1;
+        await task2;
+        await task3;
+
+        Assert.NotSame(task1, task2);
+        Assert.NotSame(task2, task3);
+    }
+
+    [Fact]
+    public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
+    {
+        var data = new byte[] { 10, 20, 30, 40, 50 };
+        var stream = new MemoryTStream(data, writable: false);
+
+        byte[] arrayBuffer = new byte[3];
+        Memory<byte> memory = arrayBuffer.AsMemory();
+        int bytesRead = await stream.ReadAsync(memory);
+
+        Assert.Equal(3, bytesRead);
+        Assert.Equal(new byte[] { 10, 20, 30 }, arrayBuffer);
+    }
+
+    [Fact]
+    public async Task WriteAsync_ArrayBackedMemory_UsesFastPath()
+    {
+        var buffer = new byte[10];
+        var stream = new MemoryTStream(buffer, length: 0, writable: true);
+
+        byte[] sourceArray = new byte[] { 10, 20, 30 };
+        ReadOnlyMemory<byte> memory = sourceArray.AsMemory();
+
+        await stream.WriteAsync(memory);
+
+        Assert.Equal(3, stream.Position);
+        Assert.Equal(3, stream.Length);
+
+        stream.Position = 0;
+        byte[] readBack = new byte[3];
+        stream.Read(readBack, 0, 3);
+        Assert.Equal(sourceArray, readBack);
+    }
 }

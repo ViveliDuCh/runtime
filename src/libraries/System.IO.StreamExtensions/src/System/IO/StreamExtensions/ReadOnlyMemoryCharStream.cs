@@ -1,8 +1,12 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.IO.StreamExtensions;
 
@@ -16,11 +20,18 @@ public class ReadOnlyMemoryCharStream : Stream
     // Identical encoding logic but different source type
     private readonly ReadOnlyMemory<char> _source;
     private readonly Encoder _encoder;
+    private readonly Encoding _encoding;
+    private int _position;
+    private long? _cachedLength;
     private int _charPosition;
     private readonly byte[] _byteBuffer;
     private int _byteBufferCount;
     private int _byteBufferPosition;
     private bool _disposed;
+    private bool _needsResync;
+
+    // For caching completed read tasks
+    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source ReadOnlyMemory{char} using UTF-8 encoding.
@@ -43,7 +54,8 @@ public class ReadOnlyMemoryCharStream : Stream
     {
         _source = source;
         _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
-        //_encoder = encoding.GetEncoder();
+        _encoding = encoding;
+        _position = 0;
         _byteBuffer = new byte[bufferSize];
     }
 
@@ -51,32 +63,87 @@ public class ReadOnlyMemoryCharStream : Stream
     public override bool CanRead => !_disposed;
 
     /// <inheritdoc/>
-    public override bool CanSeek => false;
+    public override bool CanSeek => !_disposed;
 
     /// <inheritdoc/>
     public override bool CanWrite => false;
 
     /// <inheritdoc/>
-    public override long Length => throw new NotSupportedException();
+    /// <remarks>
+    /// <para>
+    /// Accessing this property for the first time requires encoding the entire source string
+    /// to determine the byte count, which is an O(n) operation. The result is cached for
+    /// subsequent accesses.
+    /// </para>
+    /// </remarks>
+    public override long Length{
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_cachedLength.HasValue)
+            {
+                _cachedLength = _encoding.GetByteCount(_source.Span);
+            }
+            return _cachedLength.Value;
+        }
+    }
 
     /// <inheritdoc/>
     public override long Position
     {
-        get => throw new NotSupportedException();
-        set => throw new NotSupportedException();
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _position;
+        }
+        set
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, int.MaxValue);
+
+            int newPosition = (int)value;
+
+            // Only flag resync if position manually changed
+            if (_position != newPosition)
+            {
+                _position = newPosition;
+                _needsResync = true;
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    /// /// <remarks>
+    /// <para>
+    /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
+    /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
+    /// the target byte position: an O(n) operation. This can be expensive for large strings and
+    /// arbitrary seeks. For best performance, read sequentially without seeking/changing position manually.
+    /// </para>
+    /// </remarks>
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        ValidateBufferArguments(buffer, offset, count);
+        return Read(new Span<byte>(buffer, offset, count));
     }
 
     // Read method encodes chunks of the underlying string into the provided buffer "on-the-fly"
     // with a 4KB window (_byteBuffer) for encoding
     /// <inheritdoc/>
-    public override int Read(byte[] user_buffer, int offset, int count)
+    public override int Read(Span<byte> user_buffer)
     {
-        ValidateBufferArguments(user_buffer, offset, count);
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_needsResync)
+        {
+            ResyncPosition();
+            _needsResync = false;
+        }
 
         int totalBytesRead = 0;
 
-        while (totalBytesRead < count)
+        while (totalBytesRead < user_buffer.Length)
         {
             if (_byteBufferPosition >= _byteBufferCount)
             {
@@ -85,13 +152,7 @@ public class ReadOnlyMemoryCharStream : Stream
                 int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
                 bool flush = _charPosition + charsToEncode >= _source.Length;
 
-#if NET || NETCOREAPP
                 _byteBufferCount = _encoder.GetBytes(_source.Span.Slice(_charPosition, charsToEncode), _byteBuffer.AsSpan(), flush);
-#else
-                // For .NET Standard 2.0 and .NET Framework, use char array approach
-                char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
-                _byteBufferCount = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
-#endif
 
                 _charPosition += charsToEncode;
                 _byteBufferPosition = 0;
@@ -99,20 +160,173 @@ public class ReadOnlyMemoryCharStream : Stream
                 if (_byteBufferCount == 0) break;
             }
 
-            int bytesToCopy = Math.Min(count - totalBytesRead, _byteBufferCount - _byteBufferPosition);
-            Array.Copy(_byteBuffer, _byteBufferPosition, user_buffer, offset + totalBytesRead, bytesToCopy);
+            int bytesToCopy = Math.Min(user_buffer.Length - totalBytesRead, _byteBufferCount - _byteBufferPosition);
+            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(user_buffer.Slice(totalBytesRead));
             _byteBufferPosition += bytesToCopy;
             totalBytesRead += bytesToCopy;
         }
 
+        _position += totalBytesRead;
         return totalBytesRead;
+    }
+
+    /// <summary>
+    /// Resynchronizes char position with byte position after Position property was changed.
+    /// This is expensive (O(n)) because variable-length encoding requires re-encoding from start.
+    /// </summary>
+    private void ResyncPosition()
+    {
+        // Reset to beginning
+        _encoder.Reset();
+        _charPosition = 0;
+        _byteBufferPosition = 0;
+        _byteBufferCount = 0;
+
+        if (_position == 0)
+        {
+            return;
+        }
+
+        int targetBytePosition = _position;
+        int currentBytePosition = 0;
+
+        // Re-encode from start until we reach target byte position
+        while (currentBytePosition < targetBytePosition && _charPosition < _source.Length)
+        {
+            int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
+            bool flush = _charPosition + charsToEncode >= _source.Length;
+
+#if NET || NETCOREAPP
+            int bytesEncoded = _encoder.GetBytes(
+                _source.Span.Slice(_charPosition, charsToEncode),
+                _byteBuffer.AsSpan(),
+                flush);
+#else
+            char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
+            int bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+#endif
+
+            if (currentBytePosition + bytesEncoded <= targetBytePosition)
+            {
+                // Skip this entire chunk
+                currentBytePosition += bytesEncoded;
+                _charPosition += charsToEncode;
+            }
+            else
+            {
+                // Target is within this chunk
+                _byteBufferCount = bytesEncoded;
+                _byteBufferPosition = targetBytePosition - currentBytePosition;
+                _charPosition += charsToEncode;
+                break;
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        ValidateBufferArguments(buffer, offset, count);
+
+        // If cancellation was requested, bail early
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<int>(cancellationToken);
+
+        try
+        {
+            int n = Read(buffer, offset, count);
+
+            // Try to reuse the cached task if it has the same result
+            Task<int>? lastReadTask = _lastReadTask;
+            if (lastReadTask != null && lastReadTask.Result == n)
+            {
+                return lastReadTask;
+            }
+
+            // Create a new task and cache it
+            Task<int> newTask = Task.FromResult(n);
+            _lastReadTask = newTask;
+            return newTask;
+        }
+        catch (OperationCanceledException oce)
+        {
+            return Task.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<int>(exception);
+        }
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<int>(cancellationToken);
+        }
+
+        try
+        {
+
+            int bytesRead;
+            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                bytesRead = Read(array.Array!, array.Offset, array.Count);
+            }
+            else
+            {
+                // Slow path: rent a buffer, read, copy
+                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+                try
+                {
+                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
+                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rentedBuffer);
+                }
+            }
+
+            return new ValueTask<int>(bytesRead);
+        }
+        catch (OperationCanceledException oce)
+        {
+            return ValueTask.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromException<int>(exception);
+        }
     }
 
     /// <inheritdoc/>
     public override void Flush() { }
-    // Seek not supported - read-only stream. Data is read sequentially.
+
     /// <inheritdoc/>
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    /// // Seek not supported - read-only stream. Data is read sequentially.
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        long newPosition = origin switch
+        {
+            SeekOrigin.Begin => offset,
+            SeekOrigin.Current => _position + offset,
+            SeekOrigin.End => this.Length + offset,
+            _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
+        };
+
+        if (newPosition < 0)
+            throw new IOException("An attempt was made to move the position before the beginning of the stream.");
+
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(newPosition, int.MaxValue, nameof(offset));
+
+        _position = (int)newPosition;
+        return newPosition;
+    }
 
     /// <inheritdoc/>
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -121,9 +335,30 @@ public class ReadOnlyMemoryCharStream : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
     /// <inheritdoc/>
+    public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        _disposed = true;
+        if (disposing)
+        {
+            _disposed = true;
+            _lastReadTask = null;
+        }
+
         base.Dispose(disposing);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask DisposeAsync()
+    {
+        Dispose();
+        return default;
     }
 }

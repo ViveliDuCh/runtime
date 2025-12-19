@@ -1,5 +1,6 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -15,8 +16,8 @@ public sealed class StringStream : Stream
 {
     private readonly string _source;
     private readonly Encoder _encoder;
+    private readonly Encoding _encoding;
     private int _position;
-    private readonly Encoding _encoding; // Lazy computation of Length
     private long? _cachedLength;
     private int _charPosition;
     private readonly byte[] _byteBuffer;
@@ -28,7 +29,7 @@ public sealed class StringStream : Stream
     private bool _needsResync;
 
     // For caching completed read tasks
-    // private Task<int>? _lastReadTask;
+    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
@@ -65,9 +66,7 @@ public sealed class StringStream : Stream
     /// <inheritdoc/>
     public override bool CanWrite => false;
 
-    /// <summary>
-    /// Gets the length of the stream in bytes.
-    /// </summary>
+    /// <inheritdoc/>
     /// <remarks>
     /// <para>
     /// Accessing this property for the first time requires encoding the entire source string
@@ -119,7 +118,7 @@ public sealed class StringStream : Stream
     }
 
     /// <inheritdoc/>
-    /// <remarks>
+    /// /// <remarks>
     /// <para>
     /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
     /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
@@ -127,9 +126,29 @@ public sealed class StringStream : Stream
     /// arbitrary seeks. For best performance, read sequentially without seeking/changing position manually.
     /// </para>
     /// </remarks>
-    public override int Read(byte[] user_buffer, int offset, int count)
+    public override int Read(byte[] buffer, int offset, int count)
     {
-        ValidateBufferArguments(user_buffer, offset, count);
+        ValidateBufferArguments(buffer, offset, count);
+        return Read(new Span<byte>(buffer, offset, count));
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Core read implementation for both array and span overloads.
+    /// </para>
+    /// <para>
+    /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
+    /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
+    /// the target byte position: an O(n) operation. This can be expensive for large strings and
+    /// arbitrary seeks. For best performance, read sequentially without seeking/changing position manually.
+    /// </para>
+    /// <param name="user_buffer">The span to read data into.</param>
+    /// <returns>The number of bytes read, or zero if at end of stream.</returns>
+    /// <exception cref="ObjectDisposedException">The stream is closed.</exception>
+    /// </remarks>
+    public override int Read(Span<byte> user_buffer)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (_needsResync)
@@ -139,6 +158,7 @@ public sealed class StringStream : Stream
         }
 
         int totalBytesRead = 0;
+        int count = user_buffer.Length;
 
         while (totalBytesRead < count) // Regular sequential read
         {
@@ -166,7 +186,7 @@ public sealed class StringStream : Stream
             }
 
             int bytesToCopy = Math.Min(count - totalBytesRead, _byteBufferCount - _byteBufferPosition);
-            Array.Copy(_byteBuffer, _byteBufferPosition, user_buffer, offset + totalBytesRead, bytesToCopy);
+            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(user_buffer.Slice(totalBytesRead));
             _byteBufferPosition += bytesToCopy;
             totalBytesRead += bytesToCopy;
             _position += bytesToCopy; // Update position as we read
@@ -229,7 +249,107 @@ public sealed class StringStream : Stream
     }
 
     /// <inheritdoc/>
-    public override void Flush() { }
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        ValidateBufferArguments(buffer, offset, count);
+
+        // If cancellation was requested, bail early
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<int>(cancellationToken);
+
+        try
+        {
+            int n = Read(buffer, offset, count);
+
+            // Try to reuse the cached task if it has the same result
+            Task<int>? lastReadTask = _lastReadTask;
+            if (lastReadTask != null && lastReadTask.Result == n)
+            {
+                return lastReadTask;
+            }
+
+            // Create a new task and cache it
+            Task<int> newTask = Task.FromResult(n);
+            _lastReadTask = newTask;
+            return newTask;
+        }
+        catch (OperationCanceledException oce)
+        {
+            return Task.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<int>(exception);
+        }
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<int>(cancellationToken);
+        }
+
+        try
+        {
+
+            int bytesRead;
+            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                bytesRead = Read(array.Array!, array.Offset, array.Count);
+            }
+            else
+            {
+                // Slow path: rent a buffer, read, copy
+                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+                try
+                {
+                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
+                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rentedBuffer);
+                }
+            }
+
+            return new ValueTask<int>(bytesRead);
+        }
+        catch (OperationCanceledException oce)
+        {
+            return ValueTask.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromException<int>(exception);
+        }
+    }
+
+    /// <inheritdoc/>
+    public override void Flush() {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    /// <inheritdoc/>
+    public override Task FlushAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled(cancellationToken);
+        }
+
+        try
+        {
+            Flush();
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException(ex);
+        }
+    }
 
     // If done before using Length(),
     /// <inheritdoc/>
@@ -264,9 +384,30 @@ public sealed class StringStream : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
     /// <inheritdoc/>
+    public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        _disposed = true;
+        if (disposing)
+        {
+            _disposed = true;
+            _lastReadTask = null;
+        }
+
         base.Dispose(disposing);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask DisposeAsync()
+    {
+        Dispose();
+        return default;
     }
 }
