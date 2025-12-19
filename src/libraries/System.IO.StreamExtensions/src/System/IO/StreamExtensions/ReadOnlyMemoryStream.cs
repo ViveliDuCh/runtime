@@ -2,8 +2,12 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.IO.StreamExtensions;
 
@@ -16,6 +20,7 @@ public class ReadOnlyMemoryStream : Stream //ReadOnlyBufferStream from usecasesE
     private int _position;
     private bool _isOpen;
     private readonly bool _publiclyVisible;
+    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReadOnlyMemoryStream"/> class over the specified <see cref="ReadOnlyMemory{Byte}"/>.
@@ -95,19 +100,21 @@ public class ReadOnlyMemoryStream : Stream //ReadOnlyBufferStream from usecasesE
     /// <inheritdoc />
     public override int Read(byte[] buffer, int offset, int count)
     {
-        ArgumentNullException.ThrowIfNull(buffer);
-        ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(count, buffer.Length - offset);
+        ValidateBufferArguments(buffer, offset, count);
+        return Read(new Span<byte>(buffer, offset, count));
+    }
 
+    /// <inheritdoc />
+    public override int Read(Span<byte> user_buffer)
+    {
         EnsureNotClosed();
 
         int bytesAvailable = Math.Max(0, _buffer.Length - _position);
-        int bytesToRead = Math.Min(bytesAvailable, count);
+        int bytesToRead = Math.Min(bytesAvailable, user_buffer.Length);
 
         if (bytesToRead > 0)
         {
-            _buffer.Span.Slice(_position, bytesToRead).CopyTo(buffer.AsSpan(offset));
+            _buffer.Span.Slice(_position, bytesToRead).CopyTo(user_buffer);
             _position += bytesToRead;
         }
 
@@ -125,17 +132,99 @@ public class ReadOnlyMemoryStream : Stream //ReadOnlyBufferStream from usecasesE
         return _buffer.Span[_position++];
     }
 
-    /// <inheritdoc />
-    public override void Write(byte[] buffer, int offset, int count)
+    /// <inheritdoc/>
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
-        throw new NotSupportedException("Stream does not support writing.");
+        ValidateBufferArguments(buffer, offset, count);
+
+        // If cancellation was requested, bail early
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<int>(cancellationToken);
+
+        try
+        {
+            int n = Read(buffer, offset, count);
+
+            // Try to reuse the cached task if it has the same result
+            Task<int>? lastReadTask = _lastReadTask;
+            if (lastReadTask != null && lastReadTask.Result == n)
+            {
+                return lastReadTask;
+            }
+
+            // Create a new task and cache it
+            Task<int> newTask = Task.FromResult(n);
+            _lastReadTask = newTask;
+            return newTask;
+        }
+        catch (OperationCanceledException oce)
+        {
+            return Task.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<int>(exception);
+        }
     }
 
-    /// <inheritdoc />
-    public override void WriteByte(byte value)
+    /// <inheritdoc/>
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException("Stream does not support writing.");
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<int>(cancellationToken);
+        }
+
+        try
+        {
+
+            int bytesRead;
+            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                bytesRead = Read(array.Array!, array.Offset, array.Count);
+            }
+            else
+            {
+                // Slow path: rent a buffer, read, copy
+                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+                try
+                {
+                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
+                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rentedBuffer);
+                }
+            }
+
+            return new ValueTask<int>(bytesRead);
+        }
+        catch (OperationCanceledException oce)
+        {
+            return ValueTask.FromCanceled<int>(oce.CancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromException<int>(exception);
+        }
     }
+
+    /// <inheritdoc/>
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    /// <inheritdoc />
+    public override void WriteByte(byte value) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    /// <inheritdoc/>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     /// <inheritdoc />
     public override long Seek(long offset, SeekOrigin origin)
@@ -173,6 +262,7 @@ public class ReadOnlyMemoryStream : Stream //ReadOnlyBufferStream from usecasesE
     {
         if (disposing && _isOpen)
         {
+            _lastReadTask = null;
             _isOpen = false;
             // Don't set buffer to null - allow TryGetBuffer, GetBuffer & ToArray to work.
             // That the stream should no longer be used for I/O
