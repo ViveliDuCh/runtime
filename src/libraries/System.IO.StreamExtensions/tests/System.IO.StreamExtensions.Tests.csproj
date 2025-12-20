@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>$(NetCoreAppCurrent)</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="MemoryTStreamConformanceTests.cs" />
+    <Compile Include="MemoryTStreamTests.cs" />
+    <Compile Include="ReadOnlyMemoryCharStreamTests.cs" />
+    <Compile Include="ReadOnlyMemoryStreamTests.cs" />
+    <Compile Include="ReadOnlySequenceStreamTests.cs" />
+    <Compile Include="ROMCharStreamConformanceTests.cs" />
+    <Compile Include="ROMemoryStreamConformanceTests.cs" />
+    <Compile Include="ROSequenceStreamConformanceTests.cs" />
+    <Compile Include="StringStreamConformanceTests.cs" />
+    <Compile Include="StringStreamTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\src\System.IO.StreamExtensions.csproj" />
+    <ProjectReference Include="$(CommonTestPath)StreamConformanceTests\StreamConformanceTests.csproj" />
+  </ItemGroup>
+</Project>

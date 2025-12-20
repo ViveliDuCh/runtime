@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(NetCoreAppCurrent)</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="System\IO\StreamExtensions\ReadOnlyMemoryCharStream.cs" />
+    <Compile Include="System\IO\StreamExtensions\ReadOnlyMemoryStream.cs" />
+    <Compile Include="System\IO\StreamExtensions\MemoryTStream.cs" />
+    <Compile Include="System\IO\StreamExtensions\ReadOnlySequenceStream.cs" />
+    <Compile Include="System\IO\StreamExtensions\StringStream.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(CommonTestPath)StreamConformanceTests\StreamConformanceTests.csproj" />
+  </ItemGroup>
+  
+</Project>
