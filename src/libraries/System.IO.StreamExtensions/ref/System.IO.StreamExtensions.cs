@@ -13,6 +13,8 @@ namespace System.IO.StreamExtensions
         public MemoryTStream(System.Memory<byte> buffer, bool writable, bool publiclyVisible) { }
         public MemoryTStream(System.Memory<byte> buffer, int length, bool writable) { }
         public MemoryTStream(System.Memory<byte> buffer, int length, bool writable, bool publiclyVisible) { }
+        public MemoryTStream(System.ReadOnlyMemory<byte> buffer) { }
+        public MemoryTStream(System.ReadOnlyMemory<byte> buffer, bool publiclyVisible) { }
         public override bool CanRead { get { throw null; } }
         public override bool CanSeek { get { throw null; } }
         public override bool CanWrite { get { throw null; } }
@@ -29,6 +31,7 @@ namespace System.IO.StreamExtensions
         public override long Seek(long offset, System.IO.SeekOrigin origin) { throw null; }
         public override void SetLength(long value) { }
         public bool TryGetBuffer(out System.Memory<byte> buffer) { throw null; }
+        public bool TryGetBuffer(out System.ReadOnlyMemory<byte> buffer) { throw null; }
         public override void Write(byte[] buffer, int offset, int count) { }
         public override void Write(System.ReadOnlySpan<byte> buffer) { }
         public override System.Threading.Tasks.Task WriteAsync(byte[] buffer, int offset, int count, System.Threading.CancellationToken cancellationToken) { throw null; }

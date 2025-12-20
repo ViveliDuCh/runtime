@@ -14,7 +14,7 @@ public class ReadOnlyMemoryStreamTests
     public void Constructor_DefaultParameters_CreatesPubliclyVisibleStream()
     {
         var buffer = new byte[100];
-        var stream = new ReadOnlyMemoryStream(buffer);
+        var stream = new MemoryTStream(new ReadOnlyMemory<byte>(buffer));
 
         Assert.True(stream.CanRead);
         Assert.False(stream.CanWrite);
@@ -23,7 +23,7 @@ public class ReadOnlyMemoryStreamTests
         Assert.Equal(0, stream.Position);
 
         // Should be publicly visible by default
-        Assert.True(stream.TryGetBuffer(out _));
+        Assert.True(stream.TryGetBuffer(out ReadOnlyMemory<byte> bufferMemory));
     }
 
     [Theory]
@@ -32,9 +32,9 @@ public class ReadOnlyMemoryStreamTests
     public void Constructor_PubliclyVisibleParameter_ControlsBufferExposure(bool publiclyVisible)
     {
         var buffer = new byte[100];
-        var stream = new ReadOnlyMemoryStream(buffer, publiclyVisible);
+        var stream = new MemoryTStream(new ReadOnlyMemory<byte>(buffer), publiclyVisible);
 
-        Assert.Equal(publiclyVisible, stream.TryGetBuffer(out _));
+        Assert.Equal(publiclyVisible, stream.TryGetBuffer(out ReadOnlyMemory<byte> bufferMemory));
     }
 
     // Empty ReadOnlyMemory<byte> creates valid zero-length stream.
@@ -42,7 +42,7 @@ public class ReadOnlyMemoryStreamTests
     public void Constructor_EmptyMemory_CreatesZeroLengthStream()
     {
         var emptyMemory = ReadOnlyMemory<byte>.Empty;
-        var stream = new ReadOnlyMemoryStream(emptyMemory);
+        var stream = new MemoryTStream(emptyMemory);
 
         Assert.Equal(0, stream.Length);
         Assert.Equal(0, stream.Position);
@@ -55,7 +55,7 @@ public class ReadOnlyMemoryStreamTests
     {
         var buffer = new byte[] { 1, 2, 3, 4, 5 };
         Memory<byte> memory = buffer;
-        var stream = new ReadOnlyMemoryStream(memory);  // Implicit conversion
+        var stream = new MemoryTStream(memory);  // Implicit conversion
 
         Assert.Equal(5, stream.Length);
         Assert.True(stream.CanRead);
@@ -66,7 +66,7 @@ public class ReadOnlyMemoryStreamTests
     public void TryGetBuffer_PubliclyVisible_ReturnsTrue()
     {
         var originalBuffer = new byte[] { 1, 2, 3, 4, 5 };
-        var stream = new ReadOnlyMemoryStream(originalBuffer, publiclyVisible: true);
+        var stream = new MemoryTStream(originalBuffer, publiclyVisible: true);
 
         bool success = stream.TryGetBuffer(out ReadOnlyMemory<byte> retrievedBuffer);
 
@@ -80,7 +80,7 @@ public class ReadOnlyMemoryStreamTests
     public void TryGetBuffer_NotPubliclyVisible_ReturnsFalse()
     {
         var buffer = new byte[10];
-        var stream = new ReadOnlyMemoryStream(buffer, publiclyVisible: false);
+        var stream = new MemoryTStream(buffer, publiclyVisible: false);
 
         bool success = stream.TryGetBuffer(out ReadOnlyMemory<byte> retrievedBuffer);
 
@@ -92,7 +92,7 @@ public class ReadOnlyMemoryStreamTests
     public void TryGetBuffer_AfterDispose_StillWorks()
     {
         var buffer = new byte[] { 1, 2, 3 };
-        var stream = new ReadOnlyMemoryStream(buffer, publiclyVisible: true);
+        var stream = new MemoryTStream(buffer, publiclyVisible: true);
 
         stream.Dispose();
         bool success = stream.TryGetBuffer(out ReadOnlyMemory<byte> retrievedBuffer);
@@ -105,7 +105,7 @@ public class ReadOnlyMemoryStreamTests
     public void TryGetBuffer_ReturnsSameUnderlyingMemory()
     {
         var originalBuffer = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = new ReadOnlyMemoryStream(originalBuffer, publiclyVisible: true);
+        var stream = new MemoryTStream(originalBuffer, publiclyVisible: true);
 
         stream.TryGetBuffer(out ReadOnlyMemory<byte> retrievedBuffer);
 
@@ -125,7 +125,7 @@ public class ReadOnlyMemoryStreamTests
     {
         var largeBuffer = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
         var slice = largeBuffer.AsMemory(3, 4);  // [3, 4, 5, 6]
-        var stream = new ReadOnlyMemoryStream(slice);
+        var stream = new MemoryTStream(slice);
 
         Assert.Equal(4, stream.Length);
 
@@ -143,7 +143,7 @@ public class ReadOnlyMemoryStreamTests
     public void Position_AdvancesDuringRead()
     {
         var buffer = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-        var stream = new ReadOnlyMemoryStream(buffer);
+        var stream = new MemoryTStream(buffer);
         byte[] readBuffer = new byte[3];
 
         Assert.Equal(0, stream.Position);
@@ -162,7 +162,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Seek_FromCurrent_RelativeOffset()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[100]);
+        var stream = new MemoryTStream(new byte[100]);
         stream.Position = 50;
 
         // Seek forward 10 bytes
@@ -177,7 +177,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Seek_InvalidOrigin_ThrowsArgumentException()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[100]);
+        var stream = new MemoryTStream(new byte[100]);
 
         Assert.Throws<ArgumentException>(() => stream.Seek(0, (SeekOrigin)999));
     }
@@ -187,7 +187,7 @@ public class ReadOnlyMemoryStreamTests
     public void Read_ReturnsCorrectData()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
         byte[] buffer = new byte[3];
 
         int bytesRead = stream.Read(buffer, 0, 3);
@@ -201,7 +201,7 @@ public class ReadOnlyMemoryStreamTests
     public void Read_LargerThanAvailable_ReturnsPartialData()
     {
         var data = new byte[] { 1, 2, 3 };
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
         byte[] buffer = new byte[10];
 
         int bytesRead = stream.Read(buffer, 0, 10);
@@ -214,7 +214,7 @@ public class ReadOnlyMemoryStreamTests
     public void Read_AfterSeek_ReturnsCorrectData()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
 
         stream.Seek(2, SeekOrigin.Begin);
         byte[] buffer = new byte[2];
@@ -229,7 +229,7 @@ public class ReadOnlyMemoryStreamTests
     {
         var originalData = new byte[] { 1, 2, 3, 4, 5 };
         var dataCopy = (byte[])originalData.Clone();
-        var stream = new ReadOnlyMemoryStream(originalData);
+        var stream = new MemoryTStream(originalData);
 
         byte[] buffer = new byte[5];
         stream.Read(buffer, 0, 5);
@@ -242,7 +242,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Write_ThrowsNotSupportedException()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[10]);
+        var stream = new MemoryTStream(new ReadOnlyMemory<byte>(new byte[10]));
         byte[] data = new byte[] { 1, 2, 3 };
 
         Assert.Throws<NotSupportedException>(() => stream.Write(data, 0, 3));
@@ -251,7 +251,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void SetLength_ThrowsNotSupportedException()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[10]);
+        var stream = new MemoryTStream(new byte[10]);
         Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
     }
 
@@ -259,7 +259,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Dispose_SetsCanPropertiesToFalse()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[10]);
+        var stream = new MemoryTStream(new byte[10]);
 
         stream.Dispose();
 
@@ -272,7 +272,7 @@ public class ReadOnlyMemoryStreamTests
     public void Operations_AfterDispose_ThrowObjectDisposedException()
     {
         var buffer = new byte[10];
-        var stream = new ReadOnlyMemoryStream(buffer);
+        var stream = new MemoryTStream(buffer);
         stream.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => stream.Read(new byte[5], 0, 5));
@@ -287,7 +287,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Dispose_MultipleCalls_DoesNotThrow()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[10]);
+        var stream = new MemoryTStream(new byte[10]);
 
         stream.Dispose();
         stream.Dispose();  // Should not throw
@@ -298,7 +298,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void Read_NullBuffer_ThrowsArgumentNullException()
     {
-        var stream = new ReadOnlyMemoryStream(new byte[10]);
+        var stream = new MemoryTStream(new byte[10]);
 
         Assert.Throws<ArgumentNullException>(() => stream.Read(null!, 0, 5));
     }
@@ -307,7 +307,7 @@ public class ReadOnlyMemoryStreamTests
     [Fact]
     public void EmptyBuffer_BehavesCorrectly()
     {
-        var stream = new ReadOnlyMemoryStream(ReadOnlyMemory<byte>.Empty);
+        var stream = new MemoryTStream(ReadOnlyMemory<byte>.Empty);
 
         Assert.Equal(0, stream.Length);
         Assert.Equal(0, stream.Position);
@@ -329,7 +329,7 @@ public class ReadOnlyMemoryStreamTests
     {
         var data = new byte[20];
         for (int i = 0; i < 20; i++) data[i] = (byte)i;
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[5];
@@ -356,7 +356,7 @@ public class ReadOnlyMemoryStreamTests
     {
         var data = new byte[10];
         for (int i = 0; i < 10; i++) data[i] = (byte)i;
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[3];
@@ -378,7 +378,7 @@ public class ReadOnlyMemoryStreamTests
     public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = new ReadOnlyMemoryStream(data);
+        var stream = new MemoryTStream(data);
 
         byte[] arrayBuffer = new byte[3];
         Memory<byte> memory = arrayBuffer.AsMemory();

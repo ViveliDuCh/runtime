@@ -58,7 +58,7 @@ public class MemoryTStreamTests
     public void Write_BeyondCapacity_ThrowsNotSupportedException()
     {
         var buffer = new byte[10];
-        var stream = new MemoryTStream(buffer, writable: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), writable: true);
 
         byte[] data = new byte[15];  // More than capacity
 
@@ -73,7 +73,7 @@ public class MemoryTStreamTests
     public void WriteByte_BeyondCapacity_ThrowsNotSupportedException()
     {
         var buffer = new byte[3];
-        var stream = new MemoryTStream(buffer, writable: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), writable: true);
 
         stream.WriteByte(1);
         stream.WriteByte(2);
@@ -87,7 +87,7 @@ public class MemoryTStreamTests
     public void Write_UpToExactCapacity_Succeeds()
     {
         var buffer = new byte[10];
-        var stream = new MemoryTStream(buffer, writable: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), writable: true);
 
         byte[] data = new byte[10];  // Exactly capacity
         for (int i = 0; i < data.Length; i++) data[i] = (byte)i;
@@ -126,7 +126,7 @@ public class MemoryTStreamTests
     public void Write_ExtendsLength_WhenWritingPastCurrentLength()
     {
         var buffer = new byte[100];
-        var stream = new MemoryTStream(buffer, length: 10, writable: true, publiclyVisible: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), length: 10, writable: true, publiclyVisible: true);
 
         Assert.Equal(10, stream.Length);
 
@@ -295,7 +295,7 @@ public class MemoryTStreamTests
     public void Write_OverExistingData_ReplacesData()
     {
         var buffer = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-        var stream = new MemoryTStream(buffer, writable: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), writable: true);
 
         // Overwrite positions 3-5 with new data
         stream.Position = 3;
@@ -400,7 +400,7 @@ public class MemoryTStreamTests
     public void ComplexScenario_WriteSeekOverwriteRead()
     {
         var buffer = new byte[20]; // Length = 0, start with empty buffer.
-        var stream = new MemoryTStream(buffer, length: 0, writable: true, publiclyVisible: false);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), length: 0, writable: true, publiclyVisible: false);
 
         // 1. Write initial data
         stream.Write(new byte[] { 1, 2, 3, 4, 5 }, 0, 5);
@@ -496,7 +496,7 @@ public class MemoryTStreamTests
     public async Task WriteAsync_ArrayBackedMemory_UsesFastPath()
     {
         var buffer = new byte[10];
-        var stream = new MemoryTStream(buffer, length: 0, writable: true);
+        var stream = new MemoryTStream(new Memory<byte>(buffer), length: 0, writable: true);
 
         byte[] sourceArray = new byte[] { 10, 20, 30 };
         ReadOnlyMemory<byte> memory = sourceArray.AsMemory();
