@@ -25,7 +25,7 @@ public class ROMCharStreamConformanceTests : StandaloneStreamConformanceTests
         if (initialData == null || initialData.Length == 0)
         {
             // Empty string for null or empty data
-            return Task.FromResult<Stream?>(new ReadOnlyMemoryCharStream(ReadOnlyMemory<char>.Empty, Encoding.UTF8));
+            return Task.FromResult<Stream?>(StreamFactory.StreamFromText(ReadOnlyMemory<char>.Empty, Encoding.UTF8));
         }
 
         // Convert byte array to string using UTF8
@@ -40,7 +40,7 @@ public class ROMCharStreamConformanceTests : StandaloneStreamConformanceTests
         }
 
         // Creates a ReadOnlyMemoryCharStream just with the valid provided initial data. 
-        return Task.FromResult<Stream?>(new ReadOnlyMemoryCharStream(sourceString.AsMemory(), Encoding.UTF8));
+        return Task.FromResult<Stream?>(StreamFactory.StreamFromText(sourceString.AsMemory(), Encoding.UTF8));
     }
 
     // Write only stream - no write support

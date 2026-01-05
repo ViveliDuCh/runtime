@@ -26,7 +26,7 @@ public class StringStreamConformanceTests : StandaloneStreamConformanceTests
         if (initialData == null || initialData.Length == 0)
         {
             // Empty string for null or empty data
-            return Task.FromResult<Stream?>(new StringStream("", Encoding.UTF8));
+            return Task.FromResult<Stream?>(StreamFactory.StreamFromText("", Encoding.UTF8));
         }
 
         // Convert byte array to string using UTF8
@@ -43,7 +43,7 @@ public class StringStreamConformanceTests : StandaloneStreamConformanceTests
             return Task.FromResult<Stream?>(null);
         }
         // Creates a StringStream just with the valid provided initial data. 
-        return Task.FromResult<Stream?>(new StringStream(sourceString, Encoding.UTF8));
+        return Task.FromResult<Stream?>(StreamFactory.StreamFromText(sourceString, Encoding.UTF8));
     }
 
     // Write only stream - no write support

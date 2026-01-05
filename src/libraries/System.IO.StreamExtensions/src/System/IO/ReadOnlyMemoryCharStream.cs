@@ -8,17 +8,18 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace System.IO.StreamExtensions;
+namespace System.IO;
 
 /// <summary>
 /// Provides a read-only <see cref="Stream"/> implementation that encodes a string to bytes on-the-fly.
 /// </summary>
-public class ReadOnlyMemoryCharStream : Stream
+internal sealed class ReadOnlyMemoryCharStream : Stream
 {
     // Supports memory slices without string allocation
     // Can wrap externally-provided char buffers
     // Identical encoding logic but different source type
-    private readonly ReadOnlyMemory<char> _source;
+    private readonly ReadOnlyMemory<char> _memory;
+    private readonly string? _string;
     private readonly Encoder _encoder;
     private readonly Encoding _encoding;
     private int _position;
@@ -29,6 +30,7 @@ public class ReadOnlyMemoryCharStream : Stream
     private int _byteBufferPosition;
     private bool _disposed;
     private bool _needsResync;
+    private bool _isString;
 
     // For caching completed read tasks
     private Task<int>? _lastReadTask;
@@ -52,10 +54,33 @@ public class ReadOnlyMemoryCharStream : Stream
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
     public ReadOnlyMemoryCharStream(ReadOnlyMemory<char> source, Encoding encoding, int bufferSize = 4096)
     {
-        _source = source;
+        _memory = source;
         _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
         _encoding = encoding;
         _position = 0;
+        _byteBuffer = new byte[bufferSize];
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
+    /// </summary>
+    /// <param name="source">The string to read from.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
+    public ReadOnlyMemoryCharStream(string source)
+        : this(source, Encoding.UTF8)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source ReadOnlyMemory{char} and encoding.
+    /// </summary>
+    public ReadOnlyMemoryCharStream(string source, Encoding encoding, int bufferSize = 4096)
+    {
+        _string = source;
+        _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
+        _encoding = encoding;
+        _position = 0;
+        _isString = true;
         _byteBuffer = new byte[bufferSize];
     }
 
@@ -82,7 +107,7 @@ public class ReadOnlyMemoryCharStream : Stream
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_cachedLength.HasValue)
             {
-                _cachedLength = _encoding.GetByteCount(_source.Span);
+                _cachedLength = _encoding.GetByteCount(SourceSpan);
             }
             return _cachedLength.Value;
         }
@@ -113,6 +138,12 @@ public class ReadOnlyMemoryCharStream : Stream
         }
     }
 
+    /// <summary>
+    /// Unify on SourceSpan as the consumption surface
+    /// </summary>
+    public ReadOnlySpan<char> SourceSpan =>
+    _isString ? _string.AsSpan() : _memory.Span;
+
     /// <inheritdoc/>
     /// /// <remarks>
     /// <para>
@@ -141,18 +172,20 @@ public class ReadOnlyMemoryCharStream : Stream
             _needsResync = false;
         }
 
+        var streamBuffer = SourceSpan;
+
         int totalBytesRead = 0;
 
         while (totalBytesRead < user_buffer.Length)
         {
             if (_byteBufferPosition >= _byteBufferCount)
             {
-                if (_charPosition >= _source.Length) break;
+                if (_charPosition >= streamBuffer.Length) break;
 
-                int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
-                bool flush = _charPosition + charsToEncode >= _source.Length;
+                int charsToEncode = Math.Min(1024, streamBuffer.Length - _charPosition);
+                bool flush = _charPosition + charsToEncode >= streamBuffer.Length;
 
-                _byteBufferCount = _encoder.GetBytes(_source.Span.Slice(_charPosition, charsToEncode), _byteBuffer.AsSpan(), flush);
+                _byteBufferCount = _encoder.GetBytes(streamBuffer.Slice(_charPosition, charsToEncode), _byteBuffer.AsSpan(), flush);
 
                 _charPosition += charsToEncode;
                 _byteBufferPosition = 0;
@@ -189,20 +222,21 @@ public class ReadOnlyMemoryCharStream : Stream
 
         int targetBytePosition = _position;
         int currentBytePosition = 0;
+        var streamBuffer = SourceSpan;
 
         // Re-encode from start until we reach target byte position
-        while (currentBytePosition < targetBytePosition && _charPosition < _source.Length)
+        while (currentBytePosition < targetBytePosition && _charPosition < streamBuffer.Length)
         {
-            int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
-            bool flush = _charPosition + charsToEncode >= _source.Length;
+            int charsToEncode = Math.Min(1024, streamBuffer.Length - _charPosition);
+            bool flush = _charPosition + charsToEncode >= streamBuffer.Length;
 
 #if NET || NETCOREAPP
             int bytesEncoded = _encoder.GetBytes(
-                _source.Span.Slice(_charPosition, charsToEncode),
+                streamBuffer.Slice(_charPosition, charsToEncode),
                 _byteBuffer.AsSpan(),
                 flush);
 #else
-            char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
+            char[] charBuffer = _string.ToCharArray(_charPosition, charsToEncode);
             int bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
 #endif
 

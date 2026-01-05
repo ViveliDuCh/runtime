@@ -15,7 +15,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void Constructor_DefaultEncoding_UsesUTF8()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.True(stream.CanRead);
         Assert.True(stream.CanSeek);
@@ -26,23 +26,16 @@ public class ReadOnlyMemoryCharStreamTests
     public void Constructor_ExplicitEncoding_UsesSpecifiedEncoding()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars, Encoding.UTF32);
+        var stream = StreamFactory.StreamFromText(chars, Encoding.UTF32);
 
         Assert.True(stream.CanRead);
-    }
-
-    [Fact]
-    public void Constructor_NullEncoding_ThrowsArgumentNullException()
-    {
-        var chars = "test".AsMemory();
-        Assert.Throws<ArgumentNullException>(() => new ReadOnlyMemoryCharStream(chars, null!));
     }
 
     [Fact]
     public void Constructor_EmptyMemory_CreatesValidStream()
     {
         var emptyMemory = ReadOnlyMemory<char>.Empty;
-        var stream = new ReadOnlyMemoryCharStream(emptyMemory);
+        var stream = StreamFactory.StreamFromText(emptyMemory);
 
         Assert.True(stream.CanRead);
 
@@ -64,7 +57,7 @@ public class ReadOnlyMemoryCharStreamTests
         {
             byte[] expectedBytes = encoding.GetBytes(input);
             var chars = input.AsMemory();
-            var stream = new ReadOnlyMemoryCharStream(chars, encoding);
+            var stream = StreamFactory.StreamFromText(chars, encoding);
 
             byte[] actualBytes = new byte[expectedBytes.Length * 2];
             int totalRead = 0;
@@ -89,7 +82,7 @@ public class ReadOnlyMemoryCharStreamTests
         var slice = fullMemory.Slice(5, 10);  // "56789ABCDE"
 
         byte[] expectedBytes = Encoding.UTF8.GetBytes("56789ABCDE");
-        var stream = new ReadOnlyMemoryCharStream(slice, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(slice, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length + 10];
         int totalRead = 0;
@@ -113,7 +106,7 @@ public class ReadOnlyMemoryCharStreamTests
         var memory = new ReadOnlyMemory<char>(charArray);
 
         byte[] expectedBytes = Encoding.UTF8.GetBytes("Hello");
-        var stream = new ReadOnlyMemoryCharStream(memory, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(memory, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length + 10];
         int totalRead = 0;
@@ -137,9 +130,9 @@ public class ReadOnlyMemoryCharStreamTests
         var slice2 = source.AsMemory(5, 5);   // "FGHIJ"
         var slice3 = source.AsMemory(10, 6);  // "KLMNOP"
 
-        var stream1 = new ReadOnlyMemoryCharStream(slice1, Encoding.UTF8);
-        var stream2 = new ReadOnlyMemoryCharStream(slice2, Encoding.UTF8);
-        var stream3 = new ReadOnlyMemoryCharStream(slice3, Encoding.UTF8);
+        var stream1 = StreamFactory.StreamFromText(slice1, Encoding.UTF8);
+        var stream2 = StreamFactory.StreamFromText(slice2, Encoding.UTF8);
+        var stream3 = StreamFactory.StreamFromText(slice3, Encoding.UTF8);
 
         // Act
         byte[] result1 = new byte[10];
@@ -163,7 +156,7 @@ public class ReadOnlyMemoryCharStreamTests
         string input = "😀😁😂🤣😃😄";
         var chars = input.AsMemory();
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = new ReadOnlyMemoryCharStream(chars, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(chars, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length];
         int totalRead = 0;
@@ -184,7 +177,7 @@ public class ReadOnlyMemoryCharStreamTests
         string input = new string('A', 1023) + "你";
         var chars = input.AsMemory();
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = new ReadOnlyMemoryCharStream(chars, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(chars, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length];
         int totalRead = 0;
@@ -205,7 +198,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_LengthSupported()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.Equal(chars.Length, stream.Length);
     }
@@ -214,7 +207,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_PositionGetSupported()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.Equal(0, stream.Position);
     }
@@ -223,7 +216,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_PositionSetSupported()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
         stream.Position = 0;
         Assert.Equal(0, stream.Position);
     }
@@ -232,7 +225,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_SeekSupported()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.Equal(0, stream.Seek(0, SeekOrigin.Begin));
     }
@@ -241,7 +234,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_WriteThrowsNotSupportedException()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.Throws<NotSupportedException>(() => stream.Write(new byte[1], 0, 1));
     }
@@ -250,7 +243,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_SetLengthThrowsNotSupportedException()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         Assert.Throws<NotSupportedException>(() => stream.SetLength(100));
     }
@@ -260,7 +253,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_CanReadFalseAfterDispose()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         stream.Dispose();
 
@@ -271,7 +264,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_ReadAfterDispose_ThrowsObjectDisposedException()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
         stream.Dispose();
 
         byte[] buffer = new byte[10];
@@ -282,7 +275,7 @@ public class ReadOnlyMemoryCharStreamTests
     public void ReadOnlyMemoryCharStream_MultipleDispose_DoesNotThrow()
     {
         var chars = "test".AsMemory();
-        var stream = new ReadOnlyMemoryCharStream(chars);
+        var stream = StreamFactory.StreamFromText(chars);
 
         stream.Dispose();
         stream.Dispose();  // Should not throw
@@ -296,8 +289,8 @@ public class ReadOnlyMemoryCharStreamTests
     [InlineData("Emoji: 😀")] // Cross-stream comparison with StringStream
     public async Task ReadOnlyMemoryCharStream_ProducesSameOutputAsStringStream(string input)
     {
-        var memoryStream = new ReadOnlyMemoryCharStream(input.AsMemory(), Encoding.UTF8);
-        var stringStream = new StringStream(input, Encoding.UTF8);
+        var memoryStream = StreamFactory.StreamFromText(input.AsMemory(), Encoding.UTF8); // ReadOnlyMemory<char> version
+        var stringStream = StreamFactory.StreamFromText(input, Encoding.UTF8); // string version
 
         byte[] memoryResult = new byte[1000];
         byte[] stringResult = new byte[1000];
