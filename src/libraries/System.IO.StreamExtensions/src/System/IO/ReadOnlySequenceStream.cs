@@ -6,13 +6,13 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace System.IO.StreamExtensions;
+namespace System.IO;
 
 /// <summary>
 /// Provides a seekable, read-only <see cref="Stream"/> implementation over a <see cref="ReadOnlySequence{T}"/> of bytes.
 /// </summary>
 // Seekable Stream from ReadOnlySequence<byte>
-public sealed class ReadOnlySequenceStream : Stream
+internal sealed class ReadOnlySequenceStream : Stream
 {
     private ReadOnlySequence<byte> _sequence;
     private SequencePosition _position;

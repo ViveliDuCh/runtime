@@ -30,7 +30,7 @@ public class ReadOnlySequenceStreamTests
         var segment3 = segment2.Append(new byte[] { 7, 8, 9 });
 
         var sequence = new ReadOnlySequence<byte>(segment1, 0, segment3, 3);
-        var stream = new ReadOnlySequenceStream(sequence);
+        var stream = StreamFactory.StreamFromReadOnlyData(sequence);
 
         // Read all data
         byte[] buffer = new byte[9];
@@ -55,7 +55,7 @@ public class ReadOnlySequenceStreamTests
         var segment2 = segment1.Append(new byte[] { 4, 5, 6 });
 
         var sequence = new ReadOnlySequence<byte>(segment1, 0, segment2, 3);
-        var stream = new ReadOnlySequenceStream(sequence);
+        var stream = StreamFactory.StreamFromReadOnlyData(sequence);
 
         // Seek into second segment
         stream.Seek(4, SeekOrigin.Begin); // Should be at byte '5'
@@ -75,7 +75,7 @@ public class ReadOnlySequenceStreamTests
         var segment2 = segment1.Append(new byte[] { 40, 50, 60 });
 
         var sequence = new ReadOnlySequence<byte>(segment1, 0, segment2, 3);
-        var stream = new ReadOnlySequenceStream(sequence);
+        var stream = StreamFactory.StreamFromReadOnlyData(sequence);
 
         byte[] buffer = new byte[1];
 
@@ -104,7 +104,7 @@ public class ReadOnlySequenceStreamTests
         var segment3 = segment2.Append(new byte[] { 5, 6 });
 
         var sequence = new ReadOnlySequence<byte>(segment1, 0, segment3, 2);
-        var stream = new ReadOnlySequenceStream(sequence);
+        var stream = StreamFactory.StreamFromReadOnlyData(sequence);
 
         byte[] buffer = new byte[1];
 
@@ -156,7 +156,7 @@ public class ReadOnlySequenceStreamTests
     public void Read_ZeroBytes_ReturnsZero()
     {
         var data = new byte[] { 1, 2, 3 };
-        var stream = new ReadOnlySequenceStream(new ReadOnlySequence<byte>(data));
+        var stream = StreamFactory.StreamFromReadOnlyData(new ReadOnlySequence<byte>(data));
         byte[] buffer = new byte[10];
 
         int bytesRead = stream.Read(buffer, 0, 0);
@@ -168,7 +168,7 @@ public class ReadOnlySequenceStreamTests
     [Fact]
     public void EmptySequence_BehavesCorrectly()
     {
-        var stream = new ReadOnlySequenceStream(ReadOnlySequence<byte>.Empty);
+        var stream = StreamFactory.StreamFromReadOnlyData(ReadOnlySequence<byte>.Empty);
 
         Assert.Equal(0, stream.Length);
         Assert.Equal(0, stream.Position);
@@ -192,7 +192,7 @@ public class ReadOnlySequenceStreamTests
     {
         var data = new byte[20];
         for (int i = 0; i < 20; i++) data[i] = (byte)i;
-        var stream = new ReadOnlySequenceStream(new ReadOnlySequence<byte>(data));
+        var stream = StreamFactory.StreamFromReadOnlyData(new ReadOnlySequence<byte>(data));
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[5];
@@ -219,7 +219,7 @@ public class ReadOnlySequenceStreamTests
     {
         var data = new byte[10];
         for (int i = 0; i < 10; i++) data[i] = (byte)i;
-        var stream = new ReadOnlySequenceStream(new ReadOnlySequence<byte>(data));
+        var stream = StreamFactory.StreamFromReadOnlyData(new ReadOnlySequence<byte>(data));
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[3];
@@ -241,7 +241,7 @@ public class ReadOnlySequenceStreamTests
     public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = new ReadOnlySequenceStream(new ReadOnlySequence<byte>(data));
+        var stream = StreamFactory.StreamFromReadOnlyData(new ReadOnlySequence<byte>(data));
 
         byte[] arrayBuffer = new byte[3];
         Memory<byte> memory = arrayBuffer.AsMemory();

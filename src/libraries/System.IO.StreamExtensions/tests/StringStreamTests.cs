@@ -16,7 +16,7 @@ public class StringStreamTests
     {
         // Unicode characters with variable byte lengths in UTF-8
         string input = "AB你好CD";
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
 
@@ -41,7 +41,7 @@ public class StringStreamTests
     public async Task StringStream_PositionUpdatesCorrectlyAfterPartialReads()
     {
         string input = new string('X', 1000);
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         Assert.Equal(0, stream.Position);
 
@@ -65,7 +65,7 @@ public class StringStreamTests
     {
         // Create string larger than internal byte buffer (4096 bytes)
         string input = new string('A', 5000);
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         // Seek to position beyond first buffer
         stream.Position = 4500;
@@ -86,7 +86,7 @@ public class StringStreamTests
     public async Task StringStream_ReadsCorrectBytesForDifferentStrings(string input)
     {
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length + 100]; // Extra space
         int totalRead = 0;
@@ -113,7 +113,7 @@ public class StringStreamTests
         foreach (var encoding in encodings)
         {
             byte[] expectedBytes = encoding.GetBytes(input);
-            var stream = new StringStream(input, encoding);
+            var stream = StreamFactory.StreamFromText(input, encoding);
 
             byte[] actualBytes = new byte[expectedBytes.Length * 2];
             int totalRead = 0;
@@ -132,27 +132,27 @@ public class StringStreamTests
     [Fact]
     public void StringStream_ThrowsOnNullString()
     {
-        Assert.Throws<ArgumentNullException>(() => new StringStream(null!));
+        Assert.Throws<ArgumentNullException>(() => StreamFactory.StreamFromText((string)null!));
     }
 
     [Fact]
     public void StringStream_CanReadPropertyReturnsTrue()
     {
-        var stream = new StringStream("test");
+        var stream = StreamFactory.StreamFromText("test");
         Assert.True(stream.CanRead);
     }
 
     [Fact]
     public void StringStream_CanSeekPropertyReturnsTrue()
     {
-        var stream = new StringStream("test");
+        var stream = StreamFactory.StreamFromText("test");
         Assert.True(stream.CanSeek);
     }
 
     [Fact]
     public void StringStream_CanWritePropertyReturnsFalse()
     {
-        var stream = new StringStream("test");
+        var stream = StreamFactory.StreamFromText("test");
         Assert.False(stream.CanWrite);
     }
 
@@ -160,7 +160,7 @@ public class StringStreamTests
     public void StringStream_LengthReturnsCorrectValue()
     {
         var testString = "test";
-        var stream = new StringStream(testString);
+        var stream = StreamFactory.StreamFromText(testString);
         var expectedLength = Encoding.UTF8.GetByteCount(testString);
         Assert.Equal(expectedLength, stream.Length);
     }
@@ -168,14 +168,14 @@ public class StringStreamTests
     [Fact]
     public void StringStream_WriteThrowsNotSupportedException()
     {
-        var stream = new StringStream("test");
+        var stream = StreamFactory.StreamFromText("test");
         Assert.Throws<NotSupportedException>(() => stream.Write(new byte[1], 0, 1));
     }
 
     [Fact]
     public void StringStream_SetLengthThrowsNotSupportedException()
     {
-        var stream = new StringStream("test");
+        var stream = StreamFactory.StreamFromText("test");
         Assert.Throws<NotSupportedException>(() => stream.SetLength(100));
     }
 
@@ -186,7 +186,7 @@ public class StringStreamTests
         // Create a string larger than internal buffer(4KB)
         string largeString = new string('A', 10000); // 10KB of 'A's
         byte[] expectedBytes = Encoding.UTF8.GetBytes(largeString);
-        var stream = new StringStream(largeString, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(largeString, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length];
         int totalRead = 0;
@@ -213,7 +213,7 @@ public class StringStreamTests
         // String that encodes to exactly 4096 bytes(internal buffer size)
         string input = new string('A', 4096);
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         byte[] buffer = new byte[4096];
         int bytesRead = await stream.ReadAsync(buffer);
@@ -225,7 +225,7 @@ public class StringStreamTests
     [Fact]
     public async Task StringStream_MultipleReadsEventuallyReturnZero()
     {
-        var stream = new StringStream("small", Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText("small", Encoding.UTF8);
         byte[] buffer = new byte[100];
 
         int totalRead = 0;
@@ -250,7 +250,7 @@ public class StringStreamTests
     public async Task StringStream_SequentialReadAsync_PositionUpdatesAfterEachRead()
     {
         string input = "ABCDEFGHIJKLMNOP";
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
         byte[] buffer = new byte[4];
 
         Assert.Equal(0, stream.Position);
@@ -278,7 +278,7 @@ public class StringStreamTests
     {
         string input = new string('A', 5000); // Larger than internal buffer
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = new StringStream(input, Encoding.UTF8);
+        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
 
         // Read sequentially in small chunks
         byte[] actualBytes = new byte[expectedBytes.Length];

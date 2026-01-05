@@ -8,21 +8,19 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace System.IO.StreamExtensions;
+namespace System.IO;
 
 /// <summary>
 /// Provides a <see cref="Stream"/> implementation over a <see cref="Memory{T}"/> of bytes with optional write support.
 /// </summary>
-public class MemoryTStream : Stream
+internal sealed class MemoryTStream : Stream
 {
     private Memory<byte> _buffer;
     private ReadOnlyMemory<byte> _readOnlyBuffer;
     private bool _isReadOnlyBacking;
     private int _position;
-    private int _length; // // Number of valid bytes within the buffer
     private bool _isOpen;
     private bool _writable; // For read-only support
-    private readonly bool _exposable;
     private Task<int>? _lastReadTask;
 
     /// <summary>
@@ -36,28 +34,15 @@ public class MemoryTStream : Stream
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MemoryTStream"/> class over the specified <see cref="ReadOnlyMemory{Byte}"/>.
-    /// The stream is read-only and publicly visible by default.
-    /// </summary>
-    /// <param name="buffer">The <see cref="ReadOnlyMemory{Byte}"/> to wrap.</param>
-    public MemoryTStream(ReadOnlyMemory<byte> buffer)
-        : this(buffer, publiclyVisible: true)
-    {
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="MemoryTStream"/> class over the specified <see cref="ReadOnlyMemory{Byte}"/> with visibility control.
     /// Stream is always read-only.
     /// </summary>
     /// <param name="buffer">The <see cref="ReadOnlyMemory{Byte}"/> to wrap.</param>
-    /// <param name="publiclyVisible">Indicates whether the underlying buffer can be accessed via TryGetBuffer.</param>
-    public MemoryTStream(ReadOnlyMemory<byte> buffer, bool publiclyVisible)
+    public MemoryTStream(ReadOnlyMemory<byte> buffer)
     {
         _readOnlyBuffer = buffer;
         _isReadOnlyBacking = true;
-        _length = buffer.Length;
         _writable = false;
-        _exposable = publiclyVisible;
         _isOpen = true;
         _position = 0;
     }
@@ -70,65 +55,8 @@ public class MemoryTStream : Stream
     public MemoryTStream(Memory<byte> buffer, bool writable)
     {
         _buffer = buffer;
-        _length = buffer.Length;
         _isOpen = true;
         _writable = writable;
-        _position = 0;
-        _exposable = true;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MemoryTStream"/> class over the specified <see cref="Memory{Byte}"/> with a specific initial length.
-    /// </summary>
-    /// <param name="buffer">The <see cref="Memory{Byte}"/> to wrap (provides the capacity).</param>
-    /// <param name="length">The initial logical length of the stream (must be &lt;= buffer.Length).</param>
-    /// <param name="writable">Indicates whether the stream supports writing.</param>
-    /// <remarks>
-    /// This constructor allows tracking logical length separately from capacity. Use <paramref name="length"/> = 0
-    /// for an empty buffer that grows as data is written, or set it to the number of valid bytes already in the buffer.
-    /// </remarks>
-    public MemoryTStream(Memory<byte> buffer, int length, bool writable)
-        : this(buffer, length, writable, publiclyVisible: true)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MemoryTStream"/> class over the specified <see cref="Memory{Byte}"/> with optional write support.
-    /// </summary>
-    /// <param name="buffer">The <see cref="Memory{Byte}"/> to wrap.</param>
-    /// <param name="writable">Indicates whether the stream supports writing.</param>
-    /// <param name="publiclyVisible">Indicates whether the underlying buffer can be accessed via TryGetBuffer.</param>
-    public MemoryTStream(Memory<byte> buffer, bool writable, bool publiclyVisible)
-    {
-        _buffer = buffer;
-        _length = buffer.Length;
-        _isOpen = true;
-        _writable = writable;
-        _position = 0;
-        _exposable = publiclyVisible;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MemoryTStream"/> class over the specified <see cref="Memory{Byte}"/> with a specific initial length.
-    /// </summary>
-    /// <param name="buffer">The <see cref="Memory{Byte}"/> to wrap (provides the capacity).</param>
-    /// <param name="length">The initial logical length of the stream (must be &lt;= buffer.Length).</param>
-    /// <param name="writable">Indicates whether the stream supports writing.</param>
-    /// <param name="publiclyVisible">Indicates whether the underlying buffer can be accessed via TryGetBuffer.</param>
-    /// <remarks>
-    /// This constructor allows tracking logical length separately from capacity. Use <paramref name="length"/> = 0
-    /// for an empty buffer that grows as data is written, or set it to the number of valid bytes already in the buffer.
-    /// </remarks>
-    public MemoryTStream(Memory<byte> buffer, int length, bool writable, bool publiclyVisible)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, buffer.Length);
-
-        _buffer = buffer;
-        _length = length;
-        _writable = writable;
-        _exposable = publiclyVisible;
-        _isOpen = true;
         _position = 0;
     }
 
@@ -147,7 +75,7 @@ public class MemoryTStream : Stream
         get
         {
             EnsureNotClosed();
-            return _length;
+            return InternalBuffer.Length;
         }
     }
 
@@ -171,46 +99,12 @@ public class MemoryTStream : Stream
         }
     }
 
-    /// <summary>
-    /// Attempts to get the underlying writable buffer, if present and exposable.
-    /// </summary>
-    /// <param name="buffer">When this method returns, contains the underlying <see cref="Memory{Byte}"/> if the buffer is writable and exposable; otherwise, the default value.</param>
-    /// <returns><see langword="true"/> if the buffer is writable and exposable and was retrieved; otherwise, <see langword="false"/>.</returns>
-    public bool TryGetBuffer(out Memory<byte> buffer)
-    {
-        if (!_exposable || _isReadOnlyBacking)
-        {
-            buffer = default;
-            return false;
-        }
-
-        buffer = _buffer;
-        return true;
-    }
-
-    /// <summary>
-    /// Attempts to get the underlying buffer as read-only memory.
-    /// </summary>
-    /// <param name="buffer">When this method returns, contains the underlying buffer as <see cref="ReadOnlyMemory{Byte}"/> if exposable; otherwise, the default value.</param>
-    /// <returns><see langword="true"/> if the buffer is exposable and was retrieved; otherwise, <see langword="false"/>.</returns>
-    public bool TryGetBuffer(out ReadOnlyMemory<byte> buffer)
-    {
-        if (!_exposable)
-        {
-            buffer = default;
-            return false;
-        }
-
-        buffer = InternalBuffer;
-        return true;
-    }
-
     /// <inheritdoc />
     public override int ReadByte()
     {
         EnsureNotClosed();
 
-        if (_position >= _length)
+        if (_position >= InternalBuffer.Length)
             return -1;
 
         return InternalBuffer.Span[_position++];
@@ -231,13 +125,15 @@ public class MemoryTStream : Stream
     {
         EnsureNotClosed();
 
-        // If position is past the number of valid bytes written (_length), return 0 (EOF)
-        if (_position >= _length)
+        int length = InternalBuffer.Length;
+
+        // If position is past the end of the buffer, return 0 (EOF)
+        if (_position >= length)
         {
             return 0;
         }
 
-        int bytesAvailable = _length - _position;
+        int bytesAvailable = length - _position;
         int bytesToRead = Math.Min(bytesAvailable, buffer.Length);
 
         if (bytesToRead > 0)
@@ -341,10 +237,6 @@ public class MemoryTStream : Stream
             throw new NotSupportedException("Cannot expand buffer. Write would exceed capacity.");
 
         _buffer.Span[_position++] = value;
-
-        // Update number of valid bytes written if written past the current length
-        if (_position > _length)
-            _length = _position;
     }
 
     /// <inheritdoc />
@@ -369,10 +261,6 @@ public class MemoryTStream : Stream
 
         buffer.CopyTo(_buffer.Span.Slice(_position));
         _position += buffer.Length;
-
-        // Update number of valid bytes written if written past the current length
-        if (_position > _length)
-            _length = _position;
     }
 
     /// <inheritdoc />
@@ -445,7 +333,7 @@ public class MemoryTStream : Stream
         {
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
-            SeekOrigin.End => _length + offset,
+            SeekOrigin.End => InternalBuffer.Length + offset,
             _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
         };
 

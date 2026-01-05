@@ -7,12 +7,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
-namespace System.IO.StreamExtensions;
+namespace System.IO;
 
 /// <summary>
 /// Provides a read-only, non-seekable stream that encodes a string into bytes on-the-fly.
 /// </summary>
-public sealed class StringStream : Stream
+internal sealed class StringStream : Stream
 {
     private readonly string _source;
     private readonly Encoder _encoder;

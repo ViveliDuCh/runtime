@@ -25,11 +25,11 @@ public class ROMemoryStreamConformanceTests : StandaloneStreamConformanceTests
         if (initialData == null || initialData.Length == 0)
         {
             // Empty data
-            return Task.FromResult<Stream?>(new MemoryTStream(ReadOnlyMemory<byte>.Empty));
+            return Task.FromResult<Stream?>(StreamFactory.StreamFromReadOnlyData(ReadOnlyMemory<byte>.Empty));
         }
 
         var data = new ReadOnlyMemory<byte>(initialData);
-        return Task.FromResult<Stream?>(new MemoryTStream(data));
+        return Task.FromResult<Stream?>(StreamFactory.StreamFromReadOnlyData(data));
     }
 
     // Write only stream - no write support
