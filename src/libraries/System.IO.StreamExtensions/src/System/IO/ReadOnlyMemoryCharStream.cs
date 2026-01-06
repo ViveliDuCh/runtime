@@ -11,8 +11,12 @@ using System.Threading.Tasks;
 namespace System.IO;
 
 /// <summary>
-/// Provides a read-only <see cref="Stream"/> implementation that encodes a string to bytes on-the-fly.
+/// Provides a read-only, seekable stream that encodes character memory into bytes on-the-fly.
 /// </summary>
+/// <remarks>
+/// This type is not thread-safe. Synchronize access if the stream is used concurrently.
+/// The stream supports positions up to <see cref="int.MaxValue"/>. Attempting to seek beyond this limit will throw an exception.
+/// </remarks>
 internal sealed class ReadOnlyMemoryCharStream : Stream
 {
     // Supports memory slices without string allocation
@@ -46,23 +50,29 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
     } // Probably better unified with StringStream as a ctor overload**
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source string and encoding.
+    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source and encoding.
     /// </summary>
     /// <param name="source">The ReadOnlyMemory{char} to read from.</param>
-    /// <param name="encoding">The encoding to use when converting the string to bytes.</param>
+    /// <param name="encoding">The encoding to use when converting the characters to bytes.</param>
     /// <param name="bufferSize">The size of the internal buffer used for encoding. Default is 4096 bytes.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="encoding"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferSize"/> is less than or equal to zero, or greater than 1048576 (1 MB).</exception>
     public ReadOnlyMemoryCharStream(ReadOnlyMemory<char> source, Encoding encoding, int bufferSize = 4096)
     {
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bufferSize, 1024 * 1024);
+
         _memory = source;
-        _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
+        _encoder = encoding.GetEncoder();
         _encoding = encoding;
         _position = 0;
+        _isString = false;
         _byteBuffer = new byte[bufferSize];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
+    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source string using UTF-8 encoding.
     /// </summary>
     /// <param name="source">The string to read from.</param>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
@@ -72,12 +82,22 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source ReadOnlyMemory{char} and encoding.
+    /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source string and encoding.
     /// </summary>
+    /// <param name="source">The string to read from.</param>
+    /// <param name="encoding">The encoding to use when converting the string to bytes.</param>
+    /// <param name="bufferSize">The size of the internal buffer used for encoding. Default is 4096 bytes.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> or <paramref name="encoding"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferSize"/> is less than or equal to zero, or greater than 1048576 (1 MB).</exception>
     public ReadOnlyMemoryCharStream(string source, Encoding encoding, int bufferSize = 4096)
     {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bufferSize, 1024 * 1024);
+
         _string = source;
-        _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
+        _encoder = encoding.GetEncoder();
         _encoding = encoding;
         _position = 0;
         _isString = true;
@@ -125,7 +145,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentOutOfRangeException.ThrowIfNegative(value);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, int.MaxValue);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, int.MaxValue, nameof(value));
 
             int newPosition = (int)value;
 
@@ -223,10 +243,17 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
         int targetBytePosition = _position;
         int currentBytePosition = 0;
         var streamBuffer = SourceSpan;
+        int iterationCount = 0;
+        const int MaxIterations = 100000;
 
         // Re-encode from start until we reach target byte position
         while (currentBytePosition < targetBytePosition && _charPosition < streamBuffer.Length)
         {
+            if (++iterationCount > MaxIterations)
+            {
+                throw new InvalidOperationException("Stream resynchronization exceeded maximum iterations.");
+            }
+
             int charsToEncode = Math.Min(1024, streamBuffer.Length - _charPosition);
             bool flush = _charPosition + charsToEncode >= streamBuffer.Length;
 
@@ -236,9 +263,25 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
                 _byteBuffer.AsSpan(),
                 flush);
 #else
-            char[] charBuffer = _string.ToCharArray(_charPosition, charsToEncode);
-            int bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            int bytesEncoded;
+            if (_isString)
+            {
+                char[] charBuffer = _string!.ToCharArray(_charPosition, charsToEncode);
+                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            }
+            else
+            {
+                char[] charBuffer = streamBuffer.Slice(_charPosition, charsToEncode).ToArray();
+                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            }
 #endif
+
+            if (bytesEncoded == 0 && charsToEncode > 0)
+            {
+                // Encoder produced no bytes - skip this chunk
+                _charPosition += charsToEncode;
+                continue;
+            }
 
             if (currentBytePosition + bytesEncoded <= targetBytePosition)
             {
@@ -349,7 +392,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
         {
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
-            SeekOrigin.End => this.Length + offset,
+            SeekOrigin.End => Length + offset,
             _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
         };
 
@@ -358,7 +401,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
 
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newPosition, int.MaxValue, nameof(offset));
 
-        _position = (int)newPosition;
+        Position = newPosition;
         return newPosition;
     }
 

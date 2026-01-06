@@ -13,6 +13,11 @@ namespace System.IO;
 /// <summary>
 /// Provides a <see cref="Stream"/> implementation over a <see cref="Memory{T}"/> of bytes with optional write support.
 /// </summary>
+/// <remarks>
+/// This type is not thread-safe. Synchronize access if the stream is used concurrently.
+/// The stream supports positions up to <see cref="int.MaxValue"/>. Attempting to seek beyond this limit will throw an exception.
+/// The stream cannot expand beyond the initial memory capacity.
+/// </remarks>
 internal sealed class MemoryTStream : Stream
 {
     private Memory<byte> _buffer;
@@ -114,9 +119,6 @@ internal sealed class MemoryTStream : Stream
     public override int Read(byte[] buffer, int offset, int count)
     {
         ValidateBufferArguments(buffer, offset, count);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(count, buffer.Length - offset);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(offset, buffer.Length);
-
         return Read(new Span<byte>(buffer, offset, count));
     }
 
@@ -230,9 +232,6 @@ internal sealed class MemoryTStream : Stream
         EnsureNotClosed();
         EnsureWriteable();
 
-        if (_isReadOnlyBacking) // extra writable check
-            throw new NotSupportedException("Cannot write: underlying buffer is read-only.");
-
         if (_position >= InternalBuffer.Length)
             throw new NotSupportedException("Cannot expand buffer. Write would exceed capacity.");
 
@@ -242,8 +241,6 @@ internal sealed class MemoryTStream : Stream
     /// <inheritdoc />
     public override void Write(byte[] buffer, int offset, int count) {
         ValidateBufferArguments(buffer, offset, count);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(count, buffer.Length - offset);
-
         Write(new ReadOnlySpan<byte>(buffer, offset, count));
     }
 
@@ -253,11 +250,8 @@ internal sealed class MemoryTStream : Stream
         EnsureNotClosed();
         EnsureWriteable();
 
-        if (_isReadOnlyBacking)
-            throw new NotSupportedException("Cannot write: underlying buffer is read-only.");
-
-        if (_position + buffer.Length > _buffer.Length)
-            throw new NotSupportedException("Cannot expand buffer.  Write would exceed capacity.");
+        if (_position > _buffer.Length - buffer.Length)
+            throw new NotSupportedException("Cannot expand buffer. Write would exceed capacity.");
 
         buffer.CopyTo(_buffer.Span.Slice(_position));
         _position += buffer.Length;
@@ -390,7 +384,11 @@ internal sealed class MemoryTStream : Stream
 
     private void EnsureWriteable()
     {
-        if (!CanWrite)
-            throw new NotSupportedException();
+        if (_isReadOnlyBacking)
+            throw new NotSupportedException("Stream does not support writing because the underlying buffer is read-only.");
+        if (!_writable)
+            throw new NotSupportedException("Stream does not support writing.");
+
+        ObjectDisposedException.ThrowIf(!_isOpen, this);
     }
 }
