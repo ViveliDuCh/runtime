@@ -11,6 +11,11 @@ namespace System.IO;
 /// <summary>
 /// Provides a seekable, read-only <see cref="Stream"/> implementation over a <see cref="ReadOnlySequence{T}"/> of bytes.
 /// </summary>
+/// <remarks>
+/// This type is not thread-safe. Synchronize access if the stream is used concurrently.
+/// The underlying sequence should not be modified while the stream is in use.
+/// Seeking beyond the end of the stream is supported; subsequent reads will return zero bytes.
+/// </remarks>
 // Seekable Stream from ReadOnlySequence<byte>
 internal sealed class ReadOnlySequenceStream : Stream
 {
@@ -83,16 +88,7 @@ internal sealed class ReadOnlySequenceStream : Stream
     /// <inheritdoc />
     public override int Read(byte[] buffer, int offset, int count)
     {
-        EnsureNotDisposed();
-
-        ArgumentNullException.ThrowIfNull(buffer);
-        ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
-
-        if ((ulong)(uint)offset + (uint)count > (uint)buffer.Length) {
-            throw new ArgumentOutOfRangeException(nameof(count));
-        }
-
+        ValidateBufferArguments(buffer, offset, count);
         return Read(buffer.AsSpan(offset, count));
     }
 

@@ -10,8 +10,12 @@ using static System.Runtime.InteropServices.JavaScript.JSType;
 namespace System.IO;
 
 /// <summary>
-/// Provides a read-only, non-seekable stream that encodes a string into bytes on-the-fly.
+/// Provides a read-only, seekable stream that encodes a string into bytes on-the-fly.
 /// </summary>
+/// <remarks>
+/// This type is not thread-safe. Synchronize access if the stream is used concurrently.
+/// The stream supports positions up to <see cref="int.MaxValue"/>. Attempting to seek beyond this limit will throw an exception.
+/// </remarks>
 internal sealed class StringStream : Stream
 {
     private readonly string _source;
@@ -47,11 +51,17 @@ internal sealed class StringStream : Stream
     /// <param name="source">The string to read from.</param>
     /// <param name="encoding">The encoding to use when converting the string to bytes.</param>
     /// <param name="bufferSize">The size of the internal buffer used for encoding. Default is 4096 bytes.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> or <paramref name="encoding"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferSize"/> is less than or equal to zero, or greater than 1048576 (1 MB).</exception>
     public StringStream(string source, Encoding encoding, int bufferSize = 4096)
     {
-        _source = source ?? throw new ArgumentNullException(nameof(source));
-        _encoder = (encoding ?? throw new ArgumentNullException(nameof(encoding))).GetEncoder();
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bufferSize, 1024 * 1024);
+
+        _source = source;
+        _encoder = encoding.GetEncoder();
         _encoding = encoding;
         _position = 0;
         _byteBuffer = new byte[bufferSize];
@@ -104,7 +114,7 @@ internal sealed class StringStream : Stream
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentOutOfRangeException.ThrowIfNegative(value);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, int.MaxValue);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, int.MaxValue, nameof(value));
 
             int newPosition = (int)value;
 
@@ -214,10 +224,17 @@ internal sealed class StringStream : Stream
 
         int targetBytePosition = _position;
         int currentBytePosition = 0;
+        int iterationCount = 0;
+        const int MaxIterations = 100000; // Safety limit
 
         // Re-encode from start until we reach target byte position
         while (currentBytePosition < targetBytePosition && _charPosition < _source.Length)
         {
+            if (++iterationCount > MaxIterations)
+            {
+                throw new InvalidOperationException("Stream resynchronization exceeded maximum iterations.");
+            }
+
             int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
             bool flush = _charPosition + charsToEncode >= _source.Length;
 
@@ -230,6 +247,13 @@ internal sealed class StringStream : Stream
             char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
             int bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
 #endif
+
+            if (bytesEncoded == 0 && charsToEncode > 0)
+            {
+                // Encoder produced no bytes - skip this chunk
+                _charPosition += charsToEncode;
+                continue;
+            }
 
             if (currentBytePosition + bytesEncoded <= targetBytePosition)
             {
@@ -361,18 +385,16 @@ internal sealed class StringStream : Stream
         {
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
-            SeekOrigin.End => this.Length + offset,
+            SeekOrigin.End => Length + offset,
             _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
         };
 
         if (newPosition < 0)
             throw new IOException("An attempt was made to move the position before the beginning of the stream.");
 
-        // Allow seeking beyond logical length up to buffer capacity (for write scenarios)
-        // and even beyond buffer capacity (reads will return 0, writes will throw)
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newPosition, int.MaxValue, nameof(offset));
 
-        _position = (int)newPosition;
+        Position = newPosition;
         return newPosition;
     }
 
