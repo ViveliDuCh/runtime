@@ -1,6 +1,7 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 using System.Buffers;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace System.IO;
@@ -50,7 +51,16 @@ public static class StreamFactory
     /// <remarks>
     /// The stream supports seeking but is limited to positions within the range of <see cref="int.MaxValue"/>.
     /// </remarks>
-    public static Stream StreamFromReadOnlyData(ReadOnlyMemory<byte> data) => new MemoryTStream(data);
+    public static Stream StreamFromReadOnlyData(ReadOnlyMemory<byte> data)
+    {
+        if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+        {
+            // Fast path:  ReadOnlyMemory<byte> wraps an array
+            return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable: false);
+        }
+
+        return new MemoryTStream(data);
+    }
 
     /// <summary>
     /// Creates a read-only stream from a sequence of bytes.
@@ -68,7 +78,16 @@ public static class StreamFactory
     /// The stream supports seeking but is limited to positions within the range of <see cref="int.MaxValue"/>.
     /// The stream cannot expand beyond the initial memory capacity.
     /// </remarks>
-    public static Stream StreamFromWritableData(Memory<byte> data) => new MemoryTStream(data);
+    public static Stream StreamFromWritableData(Memory<byte> data)
+    {
+        if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+        {
+            // Fast path:  Memory<byte> wraps an array
+            return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count);
+        }
+
+        return new MemoryTStream(data);
+    }
 
     /// <summary>
     /// Creates a stream from mutable byte memory with configurable write support.
@@ -80,5 +99,14 @@ public static class StreamFactory
     /// The stream supports seeking but is limited to positions within the range of <see cref="int.MaxValue"/>.
     /// The stream cannot expand beyond the initial memory capacity.
     /// </remarks>
-    public static Stream StreamFromWritableData(Memory<byte> data, bool writable) => new MemoryTStream(data, writable);
+    public static Stream StreamFromWritableData(Memory<byte> data, bool writable)
+    {
+        if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+        {
+            // Fast path:  Memory<byte> wraps an array
+            return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable);
+        }
+
+        return new MemoryTStream(data, writable);
+    }
 }

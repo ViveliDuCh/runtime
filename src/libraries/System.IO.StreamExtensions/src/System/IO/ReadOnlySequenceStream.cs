@@ -23,7 +23,6 @@ internal sealed class ReadOnlySequenceStream : Stream
     private SequencePosition _position;
     private long _positionPastEnd; // -1 if within bounds, or the actual position if past end
     private bool _isDisposed;
-    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReadOnlySequenceStream"/> class over the specified <see cref="ReadOnlySequence{Byte}"/>.
@@ -123,30 +122,8 @@ internal sealed class ReadOnlySequenceStream : Stream
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled<int>(cancellationToken);
 
-        try
-        {
-            int n = Read(buffer, offset, count);
-
-            // Try to reuse the cached task if it has the same result
-            Task<int>? lastReadTask = _lastReadTask;
-            if (lastReadTask != null && lastReadTask.Result == n)
-            {
-                return lastReadTask;
-            }
-
-            // Create a new task and cache it
-            Task<int> newTask = Task.FromResult(n);
-            _lastReadTask = newTask;
-            return newTask;
-        }
-        catch (OperationCanceledException oce)
-        {
-            return Task.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return Task.FromException<int>(exception);
-        }
+        int n = Read(buffer, offset, count);
+        return Task.FromResult(n);
     }
 
     /// <inheritdoc/>
@@ -157,40 +134,8 @@ internal sealed class ReadOnlySequenceStream : Stream
             return ValueTask.FromCanceled<int>(cancellationToken);
         }
 
-        try
-        {
-
-            int bytesRead;
-            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
-            {
-                // Fast path:  Memory<byte> wraps an array
-                bytesRead = Read(array.Array!, array.Offset, array.Count);
-            }
-            else
-            {
-                // Slow path: rent a buffer, read, copy
-                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
-                try
-                {
-                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
-                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(rentedBuffer);
-                }
-            }
-
-            return new ValueTask<int>(bytesRead);
-        }
-        catch (OperationCanceledException oce)
-        {
-            return ValueTask.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return ValueTask.FromException<int>(exception);
-        }
+        int bytesRead = Read(buffer.Span);
+        return new ValueTask<int>(bytesRead);
     }
 
     /// <inheritdoc />
@@ -251,7 +196,7 @@ internal sealed class ReadOnlySequenceStream : Stream
     }
 
     /// <inheritdoc />
-    public override void Flush(){ }
+    public override void Flush() { }
 
     /// <inheritdoc />
     public override void SetLength(long value)
@@ -263,7 +208,6 @@ internal sealed class ReadOnlySequenceStream : Stream
     /// <inheritdoc />
     protected override void Dispose(bool disposing)
     {
-        _lastReadTask = null;
         _isDisposed = true;
         base.Dispose(disposing);
     }

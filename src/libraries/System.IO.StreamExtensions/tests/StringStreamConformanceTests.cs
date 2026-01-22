@@ -15,7 +15,7 @@ public class StringStreamConformanceTests : StandaloneStreamConformanceTests
 {
     // StreamConformanceTests flags to specify capabilities of StringStream
     protected override bool CanSeek => true;
-    protected override bool CanSetLength => false; // Immutalble stream
+    protected override bool CanSetLength => false; // Immutable stream
     protected override bool NopFlushCompletesSynchronously => true;
 
     /// <summary>
