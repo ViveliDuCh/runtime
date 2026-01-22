@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace System.IO;
 
@@ -31,9 +30,6 @@ internal sealed class StringStream : Stream
 
     // Explicit flag to track if Position was manually changed
     private bool _needsResync;
-
-    // For caching completed read tasks
-    private Task<int>? _lastReadTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
@@ -128,7 +124,7 @@ internal sealed class StringStream : Stream
     }
 
     /// <inheritdoc/>
-    /// /// <remarks>
+    /// <remarks>
     /// <para>
     /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
     /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
@@ -153,11 +149,11 @@ internal sealed class StringStream : Stream
     /// the target byte position: an O(n) operation. This can be expensive for large strings and
     /// arbitrary seeks. For best performance, read sequentially without seeking/changing position manually.
     /// </para>
-    /// <param name="user_buffer">The span to read data into.</param>
+    /// <param name="userBuffer">The span to read data into.</param>
     /// <returns>The number of bytes read, or zero if at end of stream.</returns>
     /// <exception cref="ObjectDisposedException">The stream is closed.</exception>
     /// </remarks>
-    public override int Read(Span<byte> user_buffer)
+    public override int Read(Span<byte> userBuffer)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -168,7 +164,7 @@ internal sealed class StringStream : Stream
         }
 
         int totalBytesRead = 0;
-        int count = user_buffer.Length;
+        int count = userBuffer.Length;
 
         while (totalBytesRead < count) // Regular sequential read
         {
@@ -196,7 +192,7 @@ internal sealed class StringStream : Stream
             }
 
             int bytesToCopy = Math.Min(count - totalBytesRead, _byteBufferCount - _byteBufferPosition);
-            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(user_buffer.Slice(totalBytesRead));
+            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(userBuffer.Slice(totalBytesRead));
             _byteBufferPosition += bytesToCopy;
             totalBytesRead += bytesToCopy;
             _position += bytesToCopy; // Update position as we read
@@ -281,30 +277,8 @@ internal sealed class StringStream : Stream
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled<int>(cancellationToken);
 
-        try
-        {
-            int n = Read(buffer, offset, count);
-
-            // Try to reuse the cached task if it has the same result
-            Task<int>? lastReadTask = _lastReadTask;
-            if (lastReadTask != null && lastReadTask.Result == n)
-            {
-                return lastReadTask;
-            }
-
-            // Create a new task and cache it
-            Task<int> newTask = Task.FromResult(n);
-            _lastReadTask = newTask;
-            return newTask;
-        }
-        catch (OperationCanceledException oce)
-        {
-            return Task.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return Task.FromException<int>(exception);
-        }
+        int n = Read(buffer, offset, count);
+        return Task.FromResult(n);
     }
 
     /// <inheritdoc/>
@@ -315,44 +289,13 @@ internal sealed class StringStream : Stream
             return ValueTask.FromCanceled<int>(cancellationToken);
         }
 
-        try
-        {
-
-            int bytesRead;
-            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
-            {
-                // Fast path:  Memory<byte> wraps an array
-                bytesRead = Read(array.Array!, array.Offset, array.Count);
-            }
-            else
-            {
-                // Slow path: rent a buffer, read, copy
-                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
-                try
-                {
-                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
-                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(rentedBuffer);
-                }
-            }
-
-            return new ValueTask<int>(bytesRead);
-        }
-        catch (OperationCanceledException oce)
-        {
-            return ValueTask.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return ValueTask.FromException<int>(exception);
-        }
+        int bytesRead = Read(buffer.Span);
+        return new ValueTask<int>(bytesRead);
     }
 
     /// <inheritdoc/>
-    public override void Flush() {
+    public override void Flush()
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
@@ -420,7 +363,6 @@ internal sealed class StringStream : Stream
         if (disposing)
         {
             _disposed = true;
-            _lastReadTask = null;
         }
 
         base.Dispose(disposing);

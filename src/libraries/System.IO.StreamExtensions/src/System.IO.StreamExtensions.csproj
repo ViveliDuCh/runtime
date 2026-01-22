@@ -10,11 +10,6 @@
     <Compile Include="System\IO\ReadOnlySequenceStream.cs" />
     <Compile Include="System\IO\StringStream.cs" />
     <Compile Include="System\IO\StreamFactory.cs" />
-    <!--<Compile Include="System\IO\StreamExtensions\StreamExtensions.cs" />-->
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="$(CommonTestPath)StreamConformanceTests\StreamConformanceTests.csproj" />
   </ItemGroup>
 
 </Project>

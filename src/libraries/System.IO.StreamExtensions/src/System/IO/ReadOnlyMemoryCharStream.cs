@@ -36,9 +36,6 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
     private bool _needsResync;
     private bool _isString;
 
-    // For caching completed read tasks
-    private Task<int>? _lastReadTask;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="ReadOnlyMemoryCharStream"/> class with the specified source ReadOnlyMemory{char} using UTF-8 encoding.
     /// </summary>
@@ -165,7 +162,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
     _isString ? _string.AsSpan() : _memory.Span;
 
     /// <inheritdoc/>
-    /// /// <remarks>
+    /// <remarks>
     /// <para>
     /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
     /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
@@ -182,7 +179,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
     // Read method encodes chunks of the underlying string into the provided buffer "on-the-fly"
     // with a 4KB window (_byteBuffer) for encoding
     /// <inheritdoc/>
-    public override int Read(Span<byte> user_buffer)
+    public override int Read(Span<byte> userBuffer)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -196,7 +193,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
 
         int totalBytesRead = 0;
 
-        while (totalBytesRead < user_buffer.Length)
+        while (totalBytesRead < userBuffer.Length)
         {
             if (_byteBufferPosition >= _byteBufferCount)
             {
@@ -213,8 +210,8 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
                 if (_byteBufferCount == 0) break;
             }
 
-            int bytesToCopy = Math.Min(user_buffer.Length - totalBytesRead, _byteBufferCount - _byteBufferPosition);
-            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(user_buffer.Slice(totalBytesRead));
+            int bytesToCopy = Math.Min(userBuffer.Length - totalBytesRead, _byteBufferCount - _byteBufferPosition);
+            _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(userBuffer.Slice(totalBytesRead));
             _byteBufferPosition += bytesToCopy;
             totalBytesRead += bytesToCopy;
         }
@@ -309,30 +306,8 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled<int>(cancellationToken);
 
-        try
-        {
-            int n = Read(buffer, offset, count);
-
-            // Try to reuse the cached task if it has the same result
-            Task<int>? lastReadTask = _lastReadTask;
-            if (lastReadTask != null && lastReadTask.Result == n)
-            {
-                return lastReadTask;
-            }
-
-            // Create a new task and cache it
-            Task<int> newTask = Task.FromResult(n);
-            _lastReadTask = newTask;
-            return newTask;
-        }
-        catch (OperationCanceledException oce)
-        {
-            return Task.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return Task.FromException<int>(exception);
-        }
+        int n = Read(buffer, offset, count);
+        return Task.FromResult(n);
     }
 
     /// <inheritdoc/>
@@ -343,47 +318,15 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
             return ValueTask.FromCanceled<int>(cancellationToken);
         }
 
-        try
-        {
-
-            int bytesRead;
-            if (MemoryMarshal.TryGetArray(buffer, out ArraySegment<byte> array))
-            {
-                // Fast path:  Memory<byte> wraps an array
-                bytesRead = Read(array.Array!, array.Offset, array.Count);
-            }
-            else
-            {
-                // Slow path: rent a buffer, read, copy
-                byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
-                try
-                {
-                    bytesRead = Read(rentedBuffer, 0, buffer.Length);
-                    rentedBuffer.AsSpan(0, bytesRead).CopyTo(buffer.Span);
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(rentedBuffer);
-                }
-            }
-
-            return new ValueTask<int>(bytesRead);
-        }
-        catch (OperationCanceledException oce)
-        {
-            return ValueTask.FromCanceled<int>(oce.CancellationToken);
-        }
-        catch (Exception exception)
-        {
-            return ValueTask.FromException<int>(exception);
-        }
+        int bytesRead = Read(buffer.Span);
+        return new ValueTask<int>(bytesRead);
     }
 
     /// <inheritdoc/>
     public override void Flush() { }
 
     /// <inheritdoc/>
-    /// // Seek not supported - read-only stream. Data is read sequentially.
+    /// Seek is supported, but expensive (O(n)) due to variable-length encoding.
     public override long Seek(long offset, SeekOrigin origin)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -407,7 +350,7 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
 
     /// <inheritdoc/>
     public override void SetLength(long value) => throw new NotSupportedException();
-    // Not supported for String or ReadOnlyMemory scenarios
+
     /// <inheritdoc/>
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
@@ -426,7 +369,6 @@ internal sealed class ReadOnlyMemoryCharStream : Stream
         if (disposing)
         {
             _disposed = true;
-            _lastReadTask = null;
         }
 
         base.Dispose(disposing);
