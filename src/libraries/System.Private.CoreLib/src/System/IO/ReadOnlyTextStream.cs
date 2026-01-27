@@ -1,6 +1,8 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
+using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -9,15 +11,20 @@ using System.Threading.Tasks;
 namespace System.IO;
 
 /// <summary>
-/// Provides a read-only, seekable stream that encodes a string into bytes on-the-fly.
+/// Provides a read-only, seekable stream that encodes character memory into bytes on-the-fly.
 /// </summary>
 /// <remarks>
 /// This type is not thread-safe. Synchronize access if the stream is used concurrently.
 /// The stream supports positions up to <see cref="int.MaxValue"/>. Attempting to seek beyond this limit will throw an exception.
 /// </remarks>
-internal sealed class StringStream : Stream
+internal sealed class ReadOnlyTextStream : Stream
 {
-    private readonly string _source;
+    // Supports memory slices without string allocation
+    // Can wrap externally-provided char buffers
+    // Identical encoding logic but different source type
+    private readonly ReadOnlyMemory<char> _memory;
+    private readonly string? _string;
+    private readonly int _length;
     private readonly Encoder _encoder;
     private readonly Encoding _encoding;
     private int _position;
@@ -27,39 +34,73 @@ internal sealed class StringStream : Stream
     private int _byteBufferCount;
     private int _byteBufferPosition;
     private bool _disposed;
-
-    // Explicit flag to track if Position was manually changed
     private bool _needsResync;
+    private bool _isString;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string using UTF-8 encoding.
+    /// Initializes a new instance of the <see cref="ReadOnlyTextStream"/> class with the specified source ReadOnlyMemory{char} using UTF-8 encoding.
     /// </summary>
-    /// <param name="source">The string to read from.</param>
+    /// <param name="source">The ReadOnlyMemory{char} to read from.</param>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
-    public StringStream(string source) // Default UTF8 encoding
+    public ReadOnlyTextStream(ReadOnlyMemory<char> source)
         : this(source, Encoding.UTF8)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StringStream"/> class with the specified source string and encoding.
+    /// Initializes a new instance of the <see cref="ReadOnlyTextStream"/> class with the specified source and encoding.
+    /// </summary>
+    /// <param name="source">The ReadOnlyMemory{char} to read from.</param>
+    /// <param name="encoding">The encoding to use when converting the characters to bytes.</param>
+    /// <param name="bufferSize">The size of the internal buffer used for encoding. Default is 4096 bytes.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="encoding"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferSize"/> is less than or equal to zero, or greater than 1048576 (1 MB).</exception>
+    public ReadOnlyTextStream(ReadOnlyMemory<char> source, Encoding encoding, int bufferSize = 4096)
+    {
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bufferSize, 1024 * 1024);
+
+        _memory = source;
+        _length = source.Length;
+        _encoder = encoding.GetEncoder();
+        _encoding = encoding;
+        _position = 0;
+        _isString = false;
+        _byteBuffer = new byte[bufferSize];
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ReadOnlyTextStream"/> class with the specified source string using UTF-8 encoding.
+    /// </summary>
+    /// <param name="source">The string to read from.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
+    public ReadOnlyTextStream(string source)
+        : this(source, Encoding.UTF8)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ReadOnlyTextStream"/> class with the specified source string and encoding.
     /// </summary>
     /// <param name="source">The string to read from.</param>
     /// <param name="encoding">The encoding to use when converting the string to bytes.</param>
     /// <param name="bufferSize">The size of the internal buffer used for encoding. Default is 4096 bytes.</param>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> or <paramref name="encoding"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferSize"/> is less than or equal to zero, or greater than 1048576 (1 MB).</exception>
-    public StringStream(string source, Encoding encoding, int bufferSize = 4096)
+    public ReadOnlyTextStream(string source, Encoding encoding, int bufferSize = 4096)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(encoding);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferSize);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(bufferSize, 1024 * 1024);
 
-        _source = source;
+        _string = source;
+        _length = source.Length;
         _encoder = encoding.GetEncoder();
         _encoding = encoding;
         _position = 0;
+        _isString = true;
         _byteBuffer = new byte[bufferSize];
     }
 
@@ -79,20 +120,14 @@ internal sealed class StringStream : Stream
     /// to determine the byte count, which is an O(n) operation. The result is cached for
     /// subsequent accesses.
     /// </para>
-    /// <para>
-    /// If you are streaming to a destination that does not require knowing the length upfront
-    /// (e.g., chunked HTTP transfer, file I/O), avoid accessing this property to maximize
-    /// performance.  The stream will still encode data on-the-fly during read operations.
-    /// </para>
     /// </remarks>
-    public override long Length
-    {
+    public override long Length{
         get
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_cachedLength.HasValue)
             {
-                _cachedLength = _encoding.GetByteCount(_source);
+                _cachedLength = _encoding.GetByteCount(SourceSpan);
             }
             return _cachedLength.Value;
         }
@@ -123,6 +158,12 @@ internal sealed class StringStream : Stream
         }
     }
 
+    /// <summary>
+    /// Unify on SourceSpan as the consumption surface
+    /// </summary>
+    public ReadOnlySpan<char> SourceSpan =>
+    _isString ? _string.AsSpan() : _memory.Span;
+
     /// <inheritdoc/>
     /// <remarks>
     /// <para>
@@ -138,21 +179,9 @@ internal sealed class StringStream : Stream
         return Read(new Span<byte>(buffer, offset, count));
     }
 
+    // Read method encodes chunks of the underlying string into the provided buffer "on-the-fly"
+    // with a 4KB window (_byteBuffer) for encoding
     /// <inheritdoc/>
-    /// <remarks>
-    /// <para>
-    /// Core read implementation for both array and span overloads.
-    /// </para>
-    /// <para>
-    /// Encodes the source string on-the-fly in 1024-character chunks. If <see cref="Position"/>
-    /// was modified (via setter or <see cref="Seek"/>), re-encodes from the beginning to reach
-    /// the target byte position: an O(n) operation. This can be expensive for large strings and
-    /// arbitrary seeks. For best performance, read sequentially without seeking/changing position manually.
-    /// </para>
-    /// <param name="userBuffer">The span to read data into.</param>
-    /// <returns>The number of bytes read, or zero if at end of stream.</returns>
-    /// <exception cref="ObjectDisposedException">The stream is closed.</exception>
-    /// </remarks>
     public override int Read(Span<byte> userBuffer)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -160,44 +189,49 @@ internal sealed class StringStream : Stream
         if (_needsResync)
         {
             ResyncPosition();
-            _needsResync = false; // Clear flag after resyncing
+            _needsResync = false;
         }
 
-        int totalBytesRead = 0;
-        int count = userBuffer.Length;
+        var streamBuffer = SourceSpan;
 
-        while (totalBytesRead < count) // Regular sequential read
+        int totalBytesRead = 0;
+
+        while (totalBytesRead < userBuffer.Length)
         {
             if (_byteBufferPosition >= _byteBufferCount)
             {
-                if (_charPosition >= _source.Length) break;
-
-                int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
-                bool flush = _charPosition + charsToEncode >= _source.Length;
+                if (_charPosition >= _length) break;
+                int charsToEncode = Math.Min(1024, _length - _charPosition);
+                bool flush = _charPosition + charsToEncode >= _length;
 
 #if NET || NETCOREAPP
-                _byteBufferCount = _encoder.GetBytes(
-                    _source.AsSpan(_charPosition, charsToEncode),
-                    _byteBuffer.AsSpan(),
-                    flush);
+                _byteBufferCount = _encoder.GetBytes(streamBuffer.Slice(_charPosition, charsToEncode), _byteBuffer.AsSpan(), flush);
 #else
-                char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
-                _byteBufferCount = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+                int bytesEncoded;
+                if (_isString)
+                {
+                    char[] charBuffer = _string!.ToCharArray(_charPosition, charsToEncode);
+                    bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+                }
+                else
+                {
+                    char[] charBuffer = streamBuffer.Slice(_charPosition, charsToEncode).ToArray();
+                    bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+                }
 #endif
-
                 _charPosition += charsToEncode;
                 _byteBufferPosition = 0;
 
                 if (_byteBufferCount == 0) break;
             }
 
-            int bytesToCopy = Math.Min(count - totalBytesRead, _byteBufferCount - _byteBufferPosition);
+            int bytesToCopy = Math.Min(userBuffer.Length - totalBytesRead, _byteBufferCount - _byteBufferPosition);
             _byteBuffer.AsSpan(_byteBufferPosition, bytesToCopy).CopyTo(userBuffer.Slice(totalBytesRead));
             _byteBufferPosition += bytesToCopy;
             totalBytesRead += bytesToCopy;
-            _position += bytesToCopy; // Update position as we read
         }
 
+        _position += totalBytesRead;
         return totalBytesRead;
     }
 
@@ -220,28 +254,38 @@ internal sealed class StringStream : Stream
 
         int targetBytePosition = _position;
         int currentBytePosition = 0;
+        var streamBuffer = SourceSpan;
         int iterationCount = 0;
-        const int MaxIterations = 100000; // Safety limit
+        const int MaxIterations = 100000;
 
         // Re-encode from start until we reach target byte position
-        while (currentBytePosition < targetBytePosition && _charPosition < _source.Length)
+        while (currentBytePosition < targetBytePosition && _charPosition < _length)
         {
             if (++iterationCount > MaxIterations)
             {
                 throw new InvalidOperationException("Stream resynchronization exceeded maximum iterations.");
             }
 
-            int charsToEncode = Math.Min(1024, _source.Length - _charPosition);
-            bool flush = _charPosition + charsToEncode >= _source.Length;
+            int charsToEncode = Math.Min(1024, _length - _charPosition);
+            bool flush = _charPosition + charsToEncode >= _length;
 
 #if NET || NETCOREAPP
             int bytesEncoded = _encoder.GetBytes(
-                _source.AsSpan(_charPosition, charsToEncode),
+                streamBuffer.Slice(_charPosition, charsToEncode),
                 _byteBuffer.AsSpan(),
                 flush);
 #else
-            char[] charBuffer = _source.ToCharArray(_charPosition, charsToEncode);
-            int bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            int bytesEncoded;
+            if (_isString)
+            {
+                char[] charBuffer = _string!.ToCharArray(_charPosition, charsToEncode);
+                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            }
+            else
+            {
+                char[] charBuffer = streamBuffer.Slice(_charPosition, charsToEncode).ToArray();
+                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
+            }
 #endif
 
             if (bytesEncoded == 0 && charsToEncode > 0)
@@ -294,32 +338,10 @@ internal sealed class StringStream : Stream
     }
 
     /// <inheritdoc/>
-    public override void Flush()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-    }
+    public override void Flush() { }
 
     /// <inheritdoc/>
-    public override Task FlushAsync(CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return Task.FromCanceled(cancellationToken);
-        }
-
-        try
-        {
-            Flush();
-            return Task.CompletedTask;
-        }
-        catch (Exception ex)
-        {
-            return Task.FromException(ex);
-        }
-    }
-
-    // If done before using Length(),
-    /// <inheritdoc/>
+    /// Seek is supported, but expensive (O(n)) due to variable-length encoding.
     public override long Seek(long offset, SeekOrigin origin)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -344,7 +366,6 @@ internal sealed class StringStream : Stream
     /// <inheritdoc/>
     public override void SetLength(long value) => throw new NotSupportedException();
 
-    // Not supported for String or ReadOnlyMemory scenarios
     /// <inheritdoc/>
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 

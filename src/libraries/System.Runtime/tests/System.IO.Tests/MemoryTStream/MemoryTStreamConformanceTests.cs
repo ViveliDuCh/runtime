@@ -9,7 +9,8 @@ using System.Text;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace System.IO.StreamExtensions.Tests;
+
+namespace System.IO.Tests;
 
 public class MemoryTStreamConformanceTests : StandaloneStreamConformanceTests
 {
@@ -25,11 +26,11 @@ public class MemoryTStreamConformanceTests : StandaloneStreamConformanceTests
         {
             // Create empty memory for null or empty data
             var emptyMemory = Memory<byte>.Empty;
-            return Task.FromResult<Stream?>(StreamFactory.StreamFromWritableData(emptyMemory, false));
+            return Task.FromResult<Stream?>(Stream.FromWritableData(emptyMemory, false));
         }
 
         // Create read-only stream (writable: false) for a mutable Memory<byte>
-        return Task.FromResult<Stream?>(StreamFactory.StreamFromWritableData(new Memory<byte>(initialData), writable: false));
+        return Task.FromResult<Stream?>(Stream.FromWritableData(new Memory<byte>(initialData), writable: false));
     }
 
     protected override Task<Stream?> CreateWriteOnlyStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
@@ -49,11 +50,11 @@ public class MemoryTStreamConformanceTests : StandaloneStreamConformanceTests
         }
 
         var memory = new Memory<byte>(initialData);
-        return Task.FromResult<Stream?>(StreamFactory.StreamFromWritableData(memory));
+        return Task.FromResult<Stream?>(Stream.FromWritableData(memory));
     }
 
     // Note to both skipped tests: It was already verified that this works when using just MemoryTStream,
-    // before adding the 'forking' in StreamFactory behavior for fast-path MemoryStream usage.
+    // before adding the 'forking' in Stream behavior for fast-path MemoryStream usage.
 
     // Override to skip the SetLength test for writable streams
     // MemoryStream (returned by fast path) behaves differently than MemoryTStream

@@ -10841,6 +10841,11 @@ namespace System.IO
         public System.Threading.Tasks.ValueTask ReadExactlyAsync(System.Memory<byte> buffer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public abstract long Seek(long offset, System.IO.SeekOrigin origin);
         public abstract void SetLength(long value);
+        public static System.IO.Stream FromReadOnlyData(System.ReadOnlyMemory<byte> data) { throw null; }
+        public static System.IO.Stream FromText(System.ReadOnlyMemory<char> text, System.Text.Encoding? encoding = null) { throw null; }
+        public static System.IO.Stream FromText(string text, System.Text.Encoding? encoding = null) { throw null; }
+        public static System.IO.Stream FromWritableData(System.Memory<byte> data) { throw null; }
+        public static System.IO.Stream FromWritableData(System.Memory<byte> data, bool writable) { throw null; }
         public static System.IO.Stream Synchronized(System.IO.Stream stream) { throw null; }
         protected static void ValidateBufferArguments(byte[] buffer, int offset, int count) { }
         protected static void ValidateCopyToArguments(System.IO.Stream destination, int bufferSize) { }
