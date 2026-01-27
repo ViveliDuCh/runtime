@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>System.IO</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -33,6 +33,13 @@
     <Compile Include="MemoryStream\MemoryStream.ConstructorTests.cs" />
     <Compile Include="MemoryStream\MemoryStream.TryGetBufferTests.cs" />
     <Compile Include="MemoryStream\MemoryStreamTests.cs" />
+    <Compile Include="MemoryTStream\MemoryTStreamConformanceTests.cs" />
+    <Compile Include="MemoryTStream\MemoryTStreamTests.cs" />
+    <Compile Include="MemoryTStream\MemoryTStream.ReadOnlyConformanceTests.cs" />
+    <Compile Include="MemoryTStream\MemoryTStream.ReadOnlyMemoryTests.cs" />
+    <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamConformanceTests.cs" />
+    <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamTests_Memory.cs" />
+    <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamTests_String.cs" />
     <Compile Include="StreamReader\StreamReader.CtorTests.cs" />
     <Compile Include="StreamReader\StreamReaderTests.cs" />
     <Compile Include="StreamReader\StreamReaderTests_Serial.cs" />

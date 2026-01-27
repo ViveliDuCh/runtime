@@ -11,7 +11,7 @@ namespace System.IO.StreamExtensions.Tests;
 /// Conformance tests for ReadOnlyMemoryStream - a read-only, seekable stream
 /// over a ReadOnlyMemory<byte>.
 /// </summary>
-public class ROMemoryStreamConformanceTests : StandaloneStreamConformanceTests
+public class MemoryTStream_ReadOnlyConformanceTests : StandaloneStreamConformanceTests
 {
     protected override bool CanSeek => true;
     protected override bool CanSetLength => false; // Immutable stream 
@@ -25,11 +25,11 @@ public class ROMemoryStreamConformanceTests : StandaloneStreamConformanceTests
         if (initialData == null || initialData.Length == 0)
         {
             // Empty data
-            return Task.FromResult<Stream?>(StreamFactory.StreamFromReadOnlyData(ReadOnlyMemory<byte>.Empty));
+            return Task.FromResult<Stream?>(Stream.FromReadOnlyData(ReadOnlyMemory<byte>.Empty));
         }
 
         var data = new ReadOnlyMemory<byte>(initialData);
-        return Task.FromResult<Stream?>(StreamFactory.StreamFromReadOnlyData(data));
+        return Task.FromResult<Stream?>(Stream.FromReadOnlyData(data));
     }
 
     // Write only stream - no write support

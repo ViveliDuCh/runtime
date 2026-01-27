@@ -4,7 +4,7 @@
 using System.Threading.Tasks;
 using Xunit;
 
-namespace System.IO.StreamExtensions.Tests;
+namespace System.IO.Tests;
 
 /// <summary>
 /// Additional specific tests for MemoryTStream beyond conformance tests.
@@ -15,7 +15,7 @@ public class MemoryTStreamTests
     public void Constructor_EmptyMemory_CreatesZeroCapacityStream()
     {
         var emptyMemory = Memory<byte>.Empty;
-        var stream = StreamFactory.StreamFromWritableData(emptyMemory);
+        var stream = Stream.FromWritableData(emptyMemory);
 
         Assert.Equal(0, stream.Length);
         Assert.Equal(0, stream.Position);
@@ -28,7 +28,7 @@ public class MemoryTStreamTests
     public void Write_BeyondCapacity_ThrowsNotSupportedException()
     {
         var buffer = new byte[10];
-        var stream = StreamFactory.StreamFromWritableData(new Memory<byte>(buffer));
+        var stream = Stream.FromWritableData(new Memory<byte>(buffer));
 
         byte[] data = new byte[15];  // More than capacity
 
@@ -48,7 +48,7 @@ public class MemoryTStreamTests
     public void WriteByte_BeyondCapacity_ThrowsNotSupportedException()
     {
         var buffer = new byte[3];
-        var stream = StreamFactory.StreamFromWritableData(new Memory<byte>(buffer));
+        var stream = Stream.FromWritableData(new Memory<byte>(buffer));
 
         stream.WriteByte(1);
         stream.WriteByte(2);
@@ -68,7 +68,7 @@ public class MemoryTStreamTests
     public void Write_UpToExactCapacity_Succeeds()
     {
         var buffer = new byte[10];
-        var stream = StreamFactory.StreamFromWritableData(new Memory<byte>(buffer));
+        var stream = Stream.FromWritableData(new Memory<byte>(buffer));
 
         byte[] data = new byte[10];  // Exactly capacity
         for (int i = 0; i < data.Length; i++) data[i] = (byte)i;
@@ -90,7 +90,7 @@ public class MemoryTStreamTests
     public void Write_PartialFitAtEndOfCapacity_WritesAvailableSpace()
     {
         var buffer = new byte[10];
-        var stream = StreamFactory.StreamFromWritableData(buffer);
+        var stream = Stream.FromWritableData(buffer);
 
         stream.Write(new byte[8], 0, 8);  // 8 bytes used, 2 remaining
         Assert.Equal(8, stream.Position);
@@ -109,7 +109,7 @@ public class MemoryTStreamTests
     public void Seek_PastCapacity_Succeeds()
     {
         var buffer = new byte[10];
-        var stream = StreamFactory.StreamFromWritableData(buffer);
+        var stream = Stream.FromWritableData(buffer);
 
         // Seek beyond capacity
         stream.Seek(100, SeekOrigin.Begin);
@@ -125,7 +125,7 @@ public class MemoryTStreamTests
     public void Seek_FromEndNegativeOffset_PositionsCorrectly()
     {
         var buffer = new byte[100];
-        var stream = StreamFactory.StreamFromWritableData(buffer);
+        var stream = Stream.FromWritableData(buffer);
 
         // Seek to 10 bytes before end
         long newPosition = stream.Seek(-10, SeekOrigin.End);
@@ -138,7 +138,7 @@ public class MemoryTStreamTests
     public void ReadOnlyStream_WriteOperations_ThrowNotSupportedException()
     {
         var buffer = new byte[100];
-        var stream = StreamFactory.StreamFromWritableData(buffer, writable: false);
+        var stream = Stream.FromWritableData(buffer, writable: false);
 
         Assert.False(stream.CanWrite);
         Assert.Throws<NotSupportedException>(() => stream.Write(new byte[5], 0, 5));
@@ -149,7 +149,7 @@ public class MemoryTStreamTests
     public void Write_OverExistingData_ReplacesData()
     {
         var buffer = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-        var stream = StreamFactory.StreamFromWritableData(new Memory<byte>(buffer));
+        var stream = Stream.FromWritableData(new Memory<byte>(buffer));
 
         // Overwrite positions 3-5 with new data
         stream.Position = 3;
@@ -167,7 +167,7 @@ public class MemoryTStreamTests
     public void Position_SetToIntMaxValue_Succeeds()
     {
         var buffer = new byte[100];
-        var stream = StreamFactory.StreamFromWritableData(buffer);
+        var stream = Stream.FromWritableData(buffer);
 
         // MemoryStream has MaxStreamLength (2147483591), MemoryTStream allows int.MaxValue
         if (stream is MemoryStream)
@@ -187,14 +187,14 @@ public class MemoryTStreamTests
     [Fact]
     public void Position_SetNegative_ThrowsArgumentOutOfRangeException()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[100]);
+        var stream = Stream.FromWritableData(new byte[100]);
         Assert.Throws<ArgumentOutOfRangeException>(() => stream.Position = -1);
     }
 
     [Fact]
     public void Position_SetBeyondLongMaxValue_ThrowsArgumentOutOfRangeException()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[100]);
+        var stream = Stream.FromWritableData(new byte[100]);
 
         // Position property accepts long, but internally casts to int
         // Setting to value > int.MaxValue should throw
@@ -204,7 +204,7 @@ public class MemoryTStreamTests
     [Fact]
     public void Dispose_SetsCanPropertiesToFalse()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[10]);
+        var stream = Stream.FromWritableData(new byte[10]);
 
         stream.Dispose();
 
@@ -217,7 +217,7 @@ public class MemoryTStreamTests
     public void Operations_AfterDispose_ThrowObjectDisposedException()
     {
         var buffer = new byte[10];
-        var stream = StreamFactory.StreamFromWritableData(buffer);
+        var stream = Stream.FromWritableData(buffer);
         stream.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => stream.Read(new byte[5], 0, 5));
@@ -233,7 +233,7 @@ public class MemoryTStreamTests
     [Fact]
     public void Write_ZeroBytes_Succeeds()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[10]);
+        var stream = Stream.FromWritableData(new byte[10]);
 
         stream.Write(new byte[0], 0, 0);
 
@@ -244,7 +244,7 @@ public class MemoryTStreamTests
     [Fact]
     public void Read_ZeroBytes_ReturnsZero()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[10]);
+        var stream = Stream.FromWritableData(new byte[10]);
 
         int bytesRead = stream.Read(new byte[10], 0, 0);
 
@@ -255,7 +255,7 @@ public class MemoryTStreamTests
     [Fact]
     public void SetLength_ThrowsNotSupportedException()
     {
-        var stream = StreamFactory.StreamFromWritableData(new byte[10]);
+        var stream = Stream.FromWritableData(new byte[10]);
 
         Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
     }
@@ -265,7 +265,7 @@ public class MemoryTStreamTests
     {
         var data = new byte[20];
         for (int i = 0; i < 20; i++) data[i] = (byte)i;
-        var stream = StreamFactory.StreamFromWritableData(data);
+        var stream = Stream.FromWritableData(data);
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[5];
@@ -289,7 +289,7 @@ public class MemoryTStreamTests
     {
         var data = new byte[10];
         for (int i = 0; i < 10; i++) data[i] = (byte)i;
-        var stream = StreamFactory.StreamFromWritableData(data);
+        var stream = Stream.FromWritableData(data);
 
         byte[] buffer1 = new byte[5];
         byte[] buffer2 = new byte[3];
@@ -311,7 +311,7 @@ public class MemoryTStreamTests
     public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var stream = StreamFactory.StreamFromWritableData(data);
+        var stream = Stream.FromWritableData(data);
 
         byte[] arrayBuffer = new byte[3];
         Memory<byte> memory = arrayBuffer.AsMemory();

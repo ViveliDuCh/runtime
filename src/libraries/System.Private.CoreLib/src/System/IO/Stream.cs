@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -1311,6 +1312,48 @@ namespace System.IO
                     _stream.EndWrite(asyncResult);
                 }
             }
+        }
+
+        public static Stream FromText(string text, Encoding? encoding = null)
+        {
+            ArgumentNullException.ThrowIfNull(text);
+            return new ReadOnlyTextStream(text, encoding ?? Encoding.UTF8);
+        }
+
+        public static Stream FromText(ReadOnlyMemory<char> text, Encoding? encoding = null) =>
+            new ReadOnlyTextStream(text, encoding ?? Encoding.UTF8);
+
+        public static Stream FromReadOnlyData(ReadOnlyMemory<byte> data)
+        {
+            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+            {
+                // Fast path:  ReadOnlyMemory<byte> wraps an array
+                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable: false);
+            }
+
+            return new MemoryTStream(data);
+        }
+
+        public static Stream FromWritableData(Memory<byte> data)
+        {
+            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count);
+            }
+
+            return new MemoryTStream(data);
+        }
+
+        public static Stream FromWritableData(Memory<byte> data, bool writable)
+        {
+            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
+            {
+                // Fast path:  Memory<byte> wraps an array
+                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable);
+            }
+
+            return new MemoryTStream(data, writable);
         }
     }
 }

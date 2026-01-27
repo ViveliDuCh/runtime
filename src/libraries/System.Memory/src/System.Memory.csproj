@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>$(NetCoreAppCurrent)</TargetFramework>
@@ -26,10 +26,12 @@
     <Compile Include="System\Buffers\ReadOnlySequence.cs" />
     <Compile Include="System\Buffers\ReadOnlySequenceDebugView.cs" />
     <Compile Include="System\Buffers\ReadOnlySequenceSegment.cs" />
+    <Compile Include="System\Buffers\ReadOnlySequenceStream.cs" />
     <Compile Include="System\Buffers\ReadOnlySequence.Helpers.cs" />
     <Compile Include="System\Buffers\SequenceReader.cs" />
     <Compile Include="System\Buffers\SequenceReader.Search.cs" />
     <Compile Include="System\Buffers\SequenceReaderExtensions.Binary.cs" />
+    <Compile Include="System\Buffers\StreamExtension.ReadOnlySequence.cs" />
     <Compile Include="System\Runtime\InteropServices\SequenceMarshal.cs" />
     <Compile Include="System\Text\EncodingExtensions.cs" />
   </ItemGroup>

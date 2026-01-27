@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 using System.Text;
 using System.Threading.Tasks;
@@ -7,28 +7,25 @@ using Xunit;
 namespace System.IO.StreamExtensions.Tests;
 
 /// <summary>
-/// Additional specific tests for StringStream beyond conformance tests.
+/// Additional specific tests for ReadOnlyTextStream with string beyond conformance tests.
 /// </summary>
-public class StringStreamTests
+public class ReadOnlyTextStreamTests_String
 {
     [Fact]
-    public async Task StringStream_SeekAndRead_WithMultiByteCharacters()
+    public async Task SeekAndRead_WithMultiByteCharacters()
     {
-        // Unicode characters with variable byte lengths in UTF-8
         string input = "AB你好CD";
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
 
-        // Seek to middle of multi-byte sequence and verify correct reading
-        stream.Position = 2; // Start of '你'
+        stream.Position = 2;
         byte[] buffer = new byte[3];
         int bytesRead = await stream.ReadAsync(buffer);
 
         Assert.Equal(3, bytesRead);
         Assert.Equal(expectedBytes.AsSpan(2, 3).ToArray(), buffer);
 
-        // Seek backward and read again
         stream.Position = 0;
         buffer = new byte[2];
         bytesRead = await stream.ReadAsync(buffer);
@@ -38,10 +35,10 @@ public class StringStreamTests
     }
 
     [Fact]
-    public async Task StringStream_PositionUpdatesCorrectlyAfterPartialReads()
+    public async Task PositionUpdatesCorrectlyAfterPartialReads()
     {
         string input = new string('X', 1000);
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
         Assert.Equal(0, stream.Position);
 
@@ -52,7 +49,6 @@ public class StringStreamTests
         await stream.ReadAsync(buffer.AsMemory(0, 50));
         Assert.Equal(150, stream.Position);
 
-        // Seek backward
         stream.Position = 75;
         Assert.Equal(75, stream.Position);
 
@@ -61,13 +57,11 @@ public class StringStreamTests
     }
 
     [Fact]
-    public async Task StringStream_SeekBeyondInternalBufferBoundary()
+    public async Task SeekBeyondInternalBufferBoundary()
     {
-        // Create string larger than internal byte buffer (4096 bytes)
         string input = new string('A', 5000);
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
-        // Seek to position beyond first buffer
         stream.Position = 4500;
         Assert.Equal(4500, stream.Position);
 
@@ -78,20 +72,18 @@ public class StringStreamTests
         Assert.All(buffer, b => Assert.Equal((byte)'A', b));
     }
 
-    // Different inputs, same encoding
     [Theory]
     [InlineData("Hello, World! ")]
     [InlineData("Unicode: 你好世界 🌍")]
     [InlineData("Multi\nLine\r\nText")]
-    public async Task StringStream_ReadsCorrectBytesForDifferentStrings(string input)
+    public async Task ReadsCorrectBytesForDifferentStrings(string input)
     {
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
-        byte[] actualBytes = new byte[expectedBytes.Length + 100]; // Extra space
+        byte[] actualBytes = new byte[expectedBytes.Length + 100];
         int totalRead = 0;
         int bytesRead;
-        // Since ReadAsync() hasn't been implemented yet, falls back to Stream's basic synchronous Read that's wrapped in a Task.
         while ((bytesRead = await stream.ReadAsync(actualBytes.AsMemory(totalRead))) > 0)
         {
             totalRead += bytesRead;
@@ -101,19 +93,17 @@ public class StringStreamTests
         Assert.Equal(expectedBytes, actualBytes.AsSpan(0, totalRead).ToArray());
     }
 
-    // Same input, different encodings
     [Theory]
     [InlineData("ASCII text")]
     [InlineData("Ñoño español")]
-    public async Task StringStream_WorksWithDifferentEncodings(string input)
+    public async Task WorksWithDifferentEncodings(string input)
     {
-        // Test with different encodings
         var encodings = new[] { Encoding.UTF8, Encoding.Unicode, Encoding.UTF32 };
 
         foreach (var encoding in encodings)
         {
             byte[] expectedBytes = encoding.GetBytes(input);
-            var stream = StreamFactory.StreamFromText(input, encoding);
+            var stream = Stream.FromText(input, encoding);
 
             byte[] actualBytes = new byte[expectedBytes.Length * 2];
             int totalRead = 0;
@@ -130,68 +120,65 @@ public class StringStreamTests
     }
 
     [Fact]
-    public void StringStream_ThrowsOnNullString()
+    public void ThrowsOnNullString()
     {
-        Assert.Throws<ArgumentNullException>(() => StreamFactory.StreamFromText((string)null!));
+        Assert.Throws<ArgumentNullException>(() => Stream.FromText((string)null!));
     }
 
     [Fact]
-    public void StringStream_CanReadPropertyReturnsTrue()
+    public void CanReadPropertyReturnsTrue()
     {
-        var stream = StreamFactory.StreamFromText("test");
+        var stream = Stream.FromText("test");
         Assert.True(stream.CanRead);
     }
 
     [Fact]
-    public void StringStream_CanSeekPropertyReturnsTrue()
+    public void CanSeekPropertyReturnsTrue()
     {
-        var stream = StreamFactory.StreamFromText("test");
+        var stream = Stream.FromText("test");
         Assert.True(stream.CanSeek);
     }
 
     [Fact]
-    public void StringStream_CanWritePropertyReturnsFalse()
+    public void CanWritePropertyReturnsFalse()
     {
-        var stream = StreamFactory.StreamFromText("test");
+        var stream = Stream.FromText("test");
         Assert.False(stream.CanWrite);
     }
 
     [Fact]
-    public void StringStream_LengthReturnsCorrectValue()
+    public void LengthReturnsCorrectValue()
     {
         var testString = "test";
-        var stream = StreamFactory.StreamFromText(testString);
+        var stream = Stream.FromText(testString);
         var expectedLength = Encoding.UTF8.GetByteCount(testString);
         Assert.Equal(expectedLength, stream.Length);
     }
 
     [Fact]
-    public void StringStream_WriteThrowsNotSupportedException()
+    public void WriteThrowsNotSupportedException()
     {
-        var stream = StreamFactory.StreamFromText("test");
+        var stream = Stream.FromText("test");
         Assert.Throws<NotSupportedException>(() => stream.Write(new byte[1], 0, 1));
     }
 
     [Fact]
-    public void StringStream_SetLengthThrowsNotSupportedException()
+    public void SetLengthThrowsNotSupportedException()
     {
-        var stream = StreamFactory.StreamFromText("test");
+        var stream = Stream.FromText("test");
         Assert.Throws<NotSupportedException>(() => stream.SetLength(100));
     }
 
-    // Edge case: Test chunked reading (important for 4KB buffer design)
     [Fact]
-    public async Task StringStream_HandlesChunkedReading()
+    public async Task HandlesChunkedReading()
     {
-        // Create a string larger than internal buffer(4KB)
-        string largeString = new string('A', 10000); // 10KB of 'A's
+        string largeString = new string('A', 10000);
         byte[] expectedBytes = Encoding.UTF8.GetBytes(largeString);
-        var stream = StreamFactory.StreamFromText(largeString, Encoding.UTF8);
+        var stream = Stream.FromText(largeString, Encoding.UTF8);
 
         byte[] actualBytes = new byte[expectedBytes.Length];
         int totalRead = 0;
-        int chunkSize = 512; // Read 512 bytes at a time
-        // Read in  chunks smaller than internal buffer size
+        int chunkSize = 512;
         while (totalRead < expectedBytes.Length)
         {
             int bytesRead = await stream.ReadAsync(
@@ -206,14 +193,12 @@ public class StringStreamTests
         Assert.Equal(expectedBytes, actualBytes);
     }
 
-    // Edge case: Test read behavior with exact buffer size match
     [Fact]
-    public async Task StringStream_ReadsWithExactBufferSizeMatch()
+    public async Task ReadsWithExactBufferSizeMatch()
     {
-        // String that encodes to exactly 4096 bytes(internal buffer size)
         string input = new string('A', 4096);
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
         byte[] buffer = new byte[4096];
         int bytesRead = await stream.ReadAsync(buffer);
@@ -223,64 +208,60 @@ public class StringStreamTests
     }
 
     [Fact]
-    public async Task StringStream_MultipleReadsEventuallyReturnZero()
+    public async Task MultipleReadsEventuallyReturnZero()
     {
-        var stream = StreamFactory.StreamFromText("small", Encoding.UTF8);
+        var stream = Stream.FromText("small", Encoding.UTF8);
         byte[] buffer = new byte[100];
 
         int totalRead = 0;
         int bytesRead;
         int readCount = 0;
 
-        // Read until EOF or 10 reads
         while ((bytesRead = await stream.ReadAsync(buffer.AsMemory(totalRead))) > 0 && readCount < 10)
         {
             totalRead += bytesRead;
             readCount++;
         }
 
-        // Additional read should return 0
         int finalRead = await stream.ReadAsync(buffer.AsMemory(0));
 
-        Assert.Equal(5, totalRead); // "small" = 5 bytes in UTF8
+        Assert.Equal(5, totalRead);
         Assert.Equal(0, finalRead);
     }
 
     [Fact]
-    public async Task StringStream_SequentialReadAsync_PositionUpdatesAfterEachRead()
+    public async Task SequentialReadAsync_PositionUpdatesAfterEachRead()
     {
         string input = "ABCDEFGHIJKLMNOP";
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
         byte[] buffer = new byte[4];
 
         Assert.Equal(0, stream.Position);
 
-        await stream.ReadAsync(buffer); // "ABCD"
+        await stream.ReadAsync(buffer);
         Assert.Equal(4, stream.Position);
 
-        await stream.ReadAsync(buffer); // "EFGH"
+        await stream.ReadAsync(buffer);
         Assert.Equal(8, stream.Position);
 
-        await stream.ReadAsync(buffer); // "IJKL"
+        await stream.ReadAsync(buffer);
         Assert.Equal(12, stream.Position);
 
-        await stream.ReadAsync(buffer); // "MNOP"
+        await stream.ReadAsync(buffer);
         Assert.Equal(16, stream.Position);
 
-        // Read at EOF should return 0
         int eofRead = await stream.ReadAsync(buffer);
         Assert.Equal(0, eofRead);
-        Assert.Equal(16, stream.Position); // Position stays at end
+        Assert.Equal(16, stream.Position);
     }
 
     [Fact]
-    public async Task StringStream_SequentialReadAsync_WithSmallChunks_ReadsEntireStream()
+    public async Task SequentialReadAsync_WithSmallChunks_ReadsEntireStream()
     {
-        string input = new string('A', 5000); // Larger than internal buffer
+        string input = new string('A', 5000);
         byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-        var stream = StreamFactory.StreamFromText(input, Encoding.UTF8);
+        var stream = Stream.FromText(input, Encoding.UTF8);
 
-        // Read sequentially in small chunks
         byte[] actualBytes = new byte[expectedBytes.Length];
         int totalBytesRead = 0;
         int chunkSize = 128;
@@ -290,7 +271,7 @@ public class StringStreamTests
             int toRead = Math.Min(chunkSize, expectedBytes.Length - totalBytesRead);
             int bytesRead = await stream.ReadAsync(actualBytes.AsMemory(totalBytesRead, toRead));
 
-            if (bytesRead == 0) break; // EOF
+            if (bytesRead == 0) break;
 
             totalBytesRead += bytesRead;
         }
