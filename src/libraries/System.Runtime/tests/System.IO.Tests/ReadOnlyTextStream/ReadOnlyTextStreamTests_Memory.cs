@@ -4,7 +4,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace System.IO.StreamExtensions.Tests;
+namespace System.IO.Tests;
 
 /// <summary>
 /// Additional specific tests for ReadOnlyTextStream with ReadOnlyMemory{char} beyond conformance tests.

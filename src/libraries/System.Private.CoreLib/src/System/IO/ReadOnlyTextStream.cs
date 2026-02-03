@@ -1,9 +1,5 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
-using System;
-using System.Buffers;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -204,21 +200,7 @@ internal sealed class ReadOnlyTextStream : Stream
                 int charsToEncode = Math.Min(1024, _length - _charPosition);
                 bool flush = _charPosition + charsToEncode >= _length;
 
-#if NET || NETCOREAPP
                 _byteBufferCount = _encoder.GetBytes(streamBuffer.Slice(_charPosition, charsToEncode), _byteBuffer.AsSpan(), flush);
-#else
-                int bytesEncoded;
-                if (_isString)
-                {
-                    char[] charBuffer = _string!.ToCharArray(_charPosition, charsToEncode);
-                    bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
-                }
-                else
-                {
-                    char[] charBuffer = streamBuffer.Slice(_charPosition, charsToEncode).ToArray();
-                    bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
-                }
-#endif
                 _charPosition += charsToEncode;
                 _byteBufferPosition = 0;
 
@@ -269,24 +251,10 @@ internal sealed class ReadOnlyTextStream : Stream
             int charsToEncode = Math.Min(1024, _length - _charPosition);
             bool flush = _charPosition + charsToEncode >= _length;
 
-#if NET || NETCOREAPP
             int bytesEncoded = _encoder.GetBytes(
                 streamBuffer.Slice(_charPosition, charsToEncode),
                 _byteBuffer.AsSpan(),
                 flush);
-#else
-            int bytesEncoded;
-            if (_isString)
-            {
-                char[] charBuffer = _string!.ToCharArray(_charPosition, charsToEncode);
-                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
-            }
-            else
-            {
-                char[] charBuffer = streamBuffer.Slice(_charPosition, charsToEncode).ToArray();
-                bytesEncoded = _encoder.GetBytes(charBuffer, 0, charsToEncode, _byteBuffer, 0, flush);
-            }
-#endif
 
             if (bytesEncoded == 0 && charsToEncode > 0)
             {

@@ -1,6 +1,5 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.IO;
 using System.Threading.Tasks;
@@ -163,12 +162,10 @@ namespace System.Buffers
         {
             EnsureNotDisposed();
 
-            // Calculate absolute position
-            long currentPosition = _positionPastEnd >= 0 ? _positionPastEnd : _sequence.Slice(_sequence.Start, _position).Length;
             long absolutePosition = origin switch
             {
                 SeekOrigin.Begin => offset,
-                SeekOrigin.Current => currentPosition + offset,
+                SeekOrigin.Current => (_positionPastEnd >= 0 ? _positionPastEnd : _sequence.Slice(_sequence.Start, _position).Length) + offset,
                 SeekOrigin.End => Length + offset,
                 _ => throw new ArgumentOutOfRangeException(nameof(origin))
             };

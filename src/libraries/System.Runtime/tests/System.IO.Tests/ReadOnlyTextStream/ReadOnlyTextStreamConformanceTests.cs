@@ -4,7 +4,7 @@ using System.IO.Tests;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace System.IO.StreamExtensions.Tests;
+namespace System.IO.Tests;
 
 /// <summary>
 /// Conformance tests for ReadOnlyTextStream using the ReadOnlyMemory{char} overload.
