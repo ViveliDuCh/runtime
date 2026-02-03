@@ -1,15 +1,13 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
-using System.Buffers;
-using System.Text;
 using System.IO;
 
 namespace System.Buffers
 {
     /// <summary>
-    /// Provides extension method for creating a stream from ReadOnlySequence{byte}.
+    /// Provides extension method for creating a stream from <see cref="ReadOnlySequence{T}"/>.
     /// </summary>
-    public static class StreamExtension_ReadOnlySequence
+    public static class ReadOnlySequenceExtensions
     {
         /// <summary>
         /// Creates a read-only stream from a sequence of bytes.
