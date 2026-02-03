@@ -140,17 +140,17 @@ namespace System.Buffers
         public override void Write(byte[] buffer, int offset, int count)
         {
             EnsureNotDisposed();
-            throw new NotSupportedException();
+            throw new NotSupportedException(SR.NotSupported_UnwritableStream);
         }
 
         /// <inheritdoc/>
-        public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
 
         /// <inheritdoc/>
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
 
         /// <inheritdoc/>
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
 
         /// <summary>
         /// Sets the position within the current stream.
@@ -167,13 +167,13 @@ namespace System.Buffers
                 SeekOrigin.Begin => offset,
                 SeekOrigin.Current => (_positionPastEnd >= 0 ? _positionPastEnd : _sequence.Slice(_sequence.Start, _position).Length) + offset,
                 SeekOrigin.End => Length + offset,
-                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+                _ => throw new ArgumentException(SR.Argument_InvalidSeekOrigin, nameof(origin))
             };
 
             // Negative positions are invalid
             if (absolutePosition < 0)
             {
-                throw new IOException("An attempt was made to move the position before the beginning of the stream.");
+                throw new IOException(SR.IO_SeekBeforeBegin);
             }
 
             // Update position - seeking past end is allowed
@@ -198,7 +198,7 @@ namespace System.Buffers
         public override void SetLength(long value)
         {
             EnsureNotDisposed();
-            throw new NotSupportedException();
+            throw new NotSupportedException(SR.NotSupported_UnwritableStream);
         }
 
         /// <inheritdoc />

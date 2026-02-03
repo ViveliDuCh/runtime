@@ -319,11 +319,11 @@ internal sealed class ReadOnlyTextStream : Stream
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
             SeekOrigin.End => Length + offset,
-            _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
+            _ => throw new ArgumentException(SR.Argument_InvalidSeekOrigin)
         };
 
         if (newPosition < 0)
-            throw new IOException("An attempt was made to move the position before the beginning of the stream.");
+            throw new IOException(SR.IO_SeekBeforeBegin);
 
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newPosition, int.MaxValue, nameof(offset));
 
@@ -332,19 +332,27 @@ internal sealed class ReadOnlyTextStream : Stream
     }
 
     /// <inheritdoc/>
-    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void SetLength(long value) => ThrowHelper.ThrowNotSupportedException_UnwritableStream();
 
     /// <inheritdoc/>
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => ThrowHelper.ThrowNotSupportedException_UnwritableStream();
 
     /// <inheritdoc/>
-    public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+    public override void Write(ReadOnlySpan<byte> buffer) => ThrowHelper.ThrowNotSupportedException_UnwritableStream();
 
     /// <inheritdoc/>
-    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        ThrowHelper.ThrowNotSupportedException_UnwritableStream();
+        return Task.CompletedTask; // unreachable
+    }
 
     /// <inheritdoc/>
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        ThrowHelper.ThrowNotSupportedException_UnwritableStream();
+        return default; // unreachable
+    }
 
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
