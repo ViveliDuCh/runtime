@@ -175,7 +175,7 @@ internal sealed class MemoryByteStream : Stream
         EnsureWriteable();
 
         if (_position >= InternalBuffer.Length)
-            throw new NotSupportedException("Cannot expand buffer. Write would exceed capacity.");
+            throw new NotSupportedException(SR.NotSupported_MemStreamNotExpandable);
 
         _buffer.Span[_position++] = value;
     }
@@ -194,7 +194,7 @@ internal sealed class MemoryByteStream : Stream
         EnsureWriteable();
 
         if (_position > _buffer.Length - buffer.Length)
-            throw new NotSupportedException("Cannot expand buffer. Write would exceed capacity.");
+            throw new NotSupportedException(SR.NotSupported_MemStreamNotExpandable);
 
         buffer.CopyTo(_buffer.Span.Slice(_position));
         _position += buffer.Length;
@@ -271,11 +271,11 @@ internal sealed class MemoryByteStream : Stream
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
             SeekOrigin.End => InternalBuffer.Length + offset,
-            _ => throw new ArgumentException("Invalid seek origin.", nameof(origin))
+            _ => throw new ArgumentException(SR.Argument_InvalidSeekOrigin)
         };
 
         if (newPosition < 0)
-            throw new IOException("An attempt was made to move the position before the beginning of the stream.");
+            throw new IOException(SR.IO_SeekBeforeBegin);
 
         // Allow seeking beyond logical length up to buffer capacity (for write scenarios)
         // and even beyond buffer capacity (reads will return 0, writes will throw)
@@ -288,7 +288,7 @@ internal sealed class MemoryByteStream : Stream
     /// <inheritdoc />
     public override void SetLength(long value)
     {
-        throw new NotSupportedException("Cannot resize MemoryByteStream.");
+        throw new NotSupportedException(SR.NotSupported_MemStreamNotExpandable);
     }
 
     /// <inheritdoc />
@@ -327,10 +327,8 @@ internal sealed class MemoryByteStream : Stream
 
     private void EnsureWriteable()
     {
-        if (_isReadOnlyBacking)
-            throw new NotSupportedException("Stream does not support writing because the underlying buffer is read-only.");
-        if (!_writable)
-            throw new NotSupportedException("Stream does not support writing.");
+        if (_isReadOnlyBacking || !_writable)
+            ThrowHelper.ThrowNotSupportedException_UnwritableStream();
 
         ObjectDisposedException.ThrowIf(!_isOpen, this);
     }
