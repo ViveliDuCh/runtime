@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 using System.IO;
 using System.Buffers;
@@ -26,14 +26,14 @@ namespace System.Memory.Tests
             {
                 // Create empty sequence for null or empty data
                 var emptySequence = ReadOnlySequence<byte>.Empty;
-                return Task.FromResult<Stream?>(emptySequence.AsStream());
+                return Task.FromResult<Stream?>(Stream.FromReadOnlyData(emptySequence));
             }
 
-            // ReadOnlySequence<byte> can be constructed from: 
+            // ReadOnlySequence<byte> can be constructed from:
             // 1. ReadOnlyMemory<byte> (single segment)
             // 2. ReadOnlySequenceSegment<byte> chain (multi-segment)
             var sequence = new ReadOnlySequence<byte>(initialData); // Single segment
-            return Task.FromResult<Stream?>(sequence.AsStream());
+            return Task.FromResult<Stream?>(Stream.FromReadOnlyData(sequence));
         }
 
         // Immutable
