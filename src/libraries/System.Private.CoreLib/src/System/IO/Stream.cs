@@ -1331,7 +1331,7 @@ namespace System.IO
                 return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable: false);
             }
 
-            return new MemoryTStream(data);
+            return new MemoryByteStream(data);
         }
 
         public static Stream FromWritableData(Memory<byte> data)
@@ -1342,18 +1342,7 @@ namespace System.IO
                 return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count);
             }
 
-            return new MemoryTStream(data);
-        }
-
-        public static Stream FromWritableData(Memory<byte> data, bool writable)
-        {
-            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
-            {
-                // Fast path:  Memory<byte> wraps an array
-                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable);
-            }
-
-            return new MemoryTStream(data, writable);
+            return new MemoryByteStream(data);
         }
     }
 }

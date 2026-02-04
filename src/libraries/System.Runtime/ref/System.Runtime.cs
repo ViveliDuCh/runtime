@@ -10866,7 +10866,6 @@ namespace System.IO
         public static System.IO.Stream FromText(System.ReadOnlyMemory<char> text, System.Text.Encoding? encoding = null) { throw null; }
         public static System.IO.Stream FromText(string text, System.Text.Encoding? encoding = null) { throw null; }
         public static System.IO.Stream FromWritableData(System.Memory<byte> data) { throw null; }
-        public static System.IO.Stream FromWritableData(System.Memory<byte> data, bool writable) { throw null; }
         public static System.IO.Stream Synchronized(System.IO.Stream stream) { throw null; }
         protected static void ValidateBufferArguments(byte[] buffer, int offset, int count) { }
         protected static void ValidateCopyToArguments(System.IO.Stream destination, int bufferSize) { }

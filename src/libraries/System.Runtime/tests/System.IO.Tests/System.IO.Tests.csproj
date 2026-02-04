@@ -33,10 +33,10 @@
     <Compile Include="MemoryStream\MemoryStream.ConstructorTests.cs" />
     <Compile Include="MemoryStream\MemoryStream.TryGetBufferTests.cs" />
     <Compile Include="MemoryStream\MemoryStreamTests.cs" />
-    <Compile Include="MemoryTStream\MemoryTStreamConformanceTests.cs" />
-    <Compile Include="MemoryTStream\MemoryTStreamTests.cs" />
-    <Compile Include="MemoryTStream\MemoryTStream.ReadOnlyConformanceTests.cs" />
-    <Compile Include="MemoryTStream\MemoryTStream.ReadOnlyMemoryTests.cs" />
+    <Compile Include="MemoryByteStream\MemoryByteStreamConformanceTests.cs" />
+    <Compile Include="MemoryByteStream\MemoryByteStreamTests.cs" />
+    <Compile Include="MemoryByteStream\MemoryByteStream.ReadOnlyConformanceTests.cs" />
+    <Compile Include="MemoryByteStream\MemoryByteStream.ReadOnlyMemoryTests.cs" />
     <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamConformanceTests.cs" />
     <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamTests_Memory.cs" />
     <Compile Include="ReadOnlyTextStream\ReadOnlyTextStreamTests_String.cs" />

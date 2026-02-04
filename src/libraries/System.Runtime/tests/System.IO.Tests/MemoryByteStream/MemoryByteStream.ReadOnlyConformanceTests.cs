@@ -1,40 +1,39 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.IO.Tests;
-using System.Text;
 using System.Threading.Tasks;
 
-namespace System.IO.Tests;
-
-/// <summary>
-/// Conformance tests for ReadOnlyMemoryStream - a read-only, seekable stream
-/// over a ReadOnlyMemory<byte>.
-/// </summary>
-public class MemoryByteStream_ReadOnlyConformanceTests : StandaloneStreamConformanceTests
+namespace System.IO.Tests
 {
-    protected override bool CanSeek => true;
-    protected override bool CanSetLength => false; // Immutable stream 
-    protected override bool NopFlushCompletesSynchronously => true;
-
     /// <summary>
-    /// Creates a read-only ReadOnlyMemoryStream with provided initial data. 
+    /// Conformance tests for ReadOnlyMemoryStream - a read-only, seekable stream
+    /// over a ReadOnlyMemory&lt;byte&gt;.
     /// </summary>
-    protected override Task<Stream?> CreateReadOnlyStreamCore(byte[]? initialData)
+    public class MemoryByteStream_ReadOnlyConformanceTests : StandaloneStreamConformanceTests
     {
-        if (initialData == null || initialData.Length == 0)
+        protected override bool CanSeek => true;
+        protected override bool CanSetLength => false; // Immutable stream
+        protected override bool NopFlushCompletesSynchronously => true;
+
+        /// <summary>
+        /// Creates a read-only ReadOnlyMemoryStream with provided initial data.
+        /// </summary>
+        protected override Task<Stream?> CreateReadOnlyStreamCore(byte[]? initialData)
         {
-            // Empty data
-            return Task.FromResult<Stream?>(Stream.FromReadOnlyData(ReadOnlyMemory<byte>.Empty));
+            if (initialData == null || initialData.Length == 0)
+            {
+                // Empty data
+                return Task.FromResult<Stream?>(Stream.FromReadOnlyData(ReadOnlyMemory<byte>.Empty));
+            }
+
+            var data = new ReadOnlyMemory<byte>(initialData);
+            return Task.FromResult<Stream?>(Stream.FromReadOnlyData(data));
         }
 
-        var data = new ReadOnlyMemory<byte>(initialData);
-        return Task.FromResult<Stream?>(Stream.FromReadOnlyData(data));
+        // Write only stream - no write support
+        protected override Task<Stream?> CreateWriteOnlyStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
+
+        // Read only stream - no read/write support
+        protected override Task<Stream?> CreateReadWriteStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
     }
-
-    // Write only stream - no write support
-    protected override Task<Stream?> CreateWriteOnlyStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
-
-    // Read only stream - no read/write support
-    protected override Task<Stream?> CreateReadWriteStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
 }
