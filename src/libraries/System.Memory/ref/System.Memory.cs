@@ -159,9 +159,15 @@ namespace System.Buffers
         public bool TryReadToAny(out System.ReadOnlySpan<T> span, scoped System.ReadOnlySpan<T> delimiters, bool advancePastDelimiter = true) { throw null; }
         public bool TryReadExact(int count, out System.Buffers.ReadOnlySequence<T> sequence) { throw null; }
     }
-    public static partial class ReadOnlySequenceExtensions
+}
+namespace System.IO
+{
+    public static partial class ReadOnlySequenceStreamExtensions
     {
-        public static System.IO.Stream AsStream(this System.Buffers.ReadOnlySequence<byte> sequence) { throw null; }
+        extension(System.IO.Stream)
+        {
+            public static System.IO.Stream FromReadOnlyData(System.Buffers.ReadOnlySequence<byte> sequence) { throw null; }
+        }
     }
 }
 namespace System.Runtime.InteropServices

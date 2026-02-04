@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 using System.Buffers;
 using System.IO;
@@ -28,7 +28,7 @@ namespace System.Memory.Tests
             var segment3 = segment2.Append(new byte[] { 7, 8, 9 });
 
             var sequence = new ReadOnlySequence<byte>(segment1, 0, segment3, 3);
-            var stream = sequence.AsStream();
+            var stream = Stream.FromReadOnlyData(sequence);
 
             // Read all data
             byte[] buffer = new byte[9];
@@ -53,7 +53,7 @@ namespace System.Memory.Tests
             var segment2 = segment1.Append(new byte[] { 4, 5, 6 });
 
             var sequence = new ReadOnlySequence<byte>(segment1, 0, segment2, 3);
-            var stream = sequence.AsStream();
+            var stream = Stream.FromReadOnlyData(sequence);
 
             // Seek into second segment
             stream.Seek(4, SeekOrigin.Begin); // Should be at byte '5'
@@ -73,7 +73,7 @@ namespace System.Memory.Tests
             var segment2 = segment1.Append(new byte[] { 40, 50, 60 });
 
             var sequence = new ReadOnlySequence<byte>(segment1, 0, segment2, 3);
-            var stream = sequence.AsStream();
+            var stream = Stream.FromReadOnlyData(sequence);
 
             byte[] buffer = new byte[1];
 
@@ -102,7 +102,7 @@ namespace System.Memory.Tests
             var segment3 = segment2.Append(new byte[] { 5, 6 });
 
             var sequence = new ReadOnlySequence<byte>(segment1, 0, segment3, 2);
-            var stream = sequence.AsStream();
+            var stream = Stream.FromReadOnlyData(sequence);
 
             byte[] buffer = new byte[1];
 
@@ -154,7 +154,7 @@ namespace System.Memory.Tests
         public void Read_ZeroBytes_ReturnsZero()
         {
             var data = new byte[] { 1, 2, 3 };
-            var stream = new ReadOnlySequence<byte>(data).AsStream();
+            var stream = Stream.FromReadOnlyData(new ReadOnlySequence<byte>(data));
             byte[] buffer = new byte[10];
 
             int bytesRead = stream.Read(buffer, 0, 0);
@@ -166,7 +166,7 @@ namespace System.Memory.Tests
         [Fact]
         public void EmptySequence_BehavesCorrectly()
         {
-            var stream = ReadOnlySequence<byte>.Empty.AsStream();
+            var stream = Stream.FromReadOnlyData(ReadOnlySequence<byte>.Empty);
 
             Assert.Equal(0, stream.Length);
             Assert.Equal(0, stream.Position);
@@ -190,7 +190,7 @@ namespace System.Memory.Tests
         {
             var data = new byte[20];
             for (int i = 0; i < 20; i++) data[i] = (byte)i;
-            var stream = new ReadOnlySequence<byte>(data).AsStream();
+            var stream = Stream.FromReadOnlyData(new ReadOnlySequence<byte>(data));
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[5];
@@ -217,7 +217,7 @@ namespace System.Memory.Tests
         {
             var data = new byte[10];
             for (int i = 0; i < 10; i++) data[i] = (byte)i;
-            var stream = new ReadOnlySequence<byte>(data).AsStream();
+            var stream = Stream.FromReadOnlyData(new ReadOnlySequence<byte>(data));
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[3];
@@ -239,7 +239,7 @@ namespace System.Memory.Tests
         public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
         {
             var data = new byte[] { 10, 20, 30, 40, 50 };
-            var stream = new ReadOnlySequence<byte>(data).AsStream();
+            var stream = Stream.FromReadOnlyData(new ReadOnlySequence<byte>(data));
 
             byte[] arrayBuffer = new byte[3];
             Memory<byte> memory = arrayBuffer.AsMemory();
