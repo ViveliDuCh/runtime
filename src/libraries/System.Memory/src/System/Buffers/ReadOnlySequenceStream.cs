@@ -137,11 +137,7 @@ namespace System.Buffers
         }
 
         /// <inheritdoc />
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            EnsureNotDisposed();
-            throw new NotSupportedException(SR.NotSupported_UnwritableStream);
-        }
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
 
         /// <inheritdoc/>
         public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
@@ -195,11 +191,7 @@ namespace System.Buffers
         public override void Flush() { }
 
         /// <inheritdoc />
-        public override void SetLength(long value)
-        {
-            EnsureNotDisposed();
-            throw new NotSupportedException(SR.NotSupported_UnwritableStream);
-        }
+        public override void SetLength(long value) => throw new NotSupportedException(SR.NotSupported_UnwritableStream);
 
         /// <inheritdoc />
         protected override void Dispose(bool disposing)

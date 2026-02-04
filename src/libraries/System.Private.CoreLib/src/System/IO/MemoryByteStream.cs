@@ -18,10 +18,9 @@ internal sealed class MemoryByteStream : Stream
 {
     private Memory<byte> _buffer;
     private ReadOnlyMemory<byte> _readOnlyBuffer;
-    private bool _isReadOnlyBacking;
+    private readonly bool _isReadOnlyBacking;
     private int _position;
     private bool _isOpen;
-    private bool _writable; // For read-only support
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MemoryByteStream"/> class over the specified <see cref="Memory{Byte}"/>.
@@ -29,20 +28,9 @@ internal sealed class MemoryByteStream : Stream
     /// </summary>
     /// <param name="buffer">The <see cref="Memory{Byte}"/> to wrap.</param>
     public MemoryByteStream(Memory<byte> buffer)
-    : this(buffer, writable: true)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MemoryByteStream"/> class over the specified <see cref="Memory{Byte}"/> with write control.
-    /// </summary>
-    /// <param name="buffer">The <see cref="Memory{Byte}"/> to wrap.</param>
-    /// <param name="writable">Whether the stream supports writing.</param>
-    public MemoryByteStream(Memory<byte> buffer, bool writable)
     {
         _buffer = buffer;
         _isReadOnlyBacking = false;
-        _writable = writable;
         _isOpen = true;
         _position = 0;
     }
@@ -56,7 +44,6 @@ internal sealed class MemoryByteStream : Stream
     {
         _readOnlyBuffer = buffer;
         _isReadOnlyBacking = true;
-        _writable = false;
         _isOpen = true;
         _position = 0;
     }
@@ -68,7 +55,7 @@ internal sealed class MemoryByteStream : Stream
     public override bool CanSeek => _isOpen;
 
     /// <inheritdoc />
-    public override bool CanWrite => _writable && _isOpen;
+    public override bool CanWrite => !_isReadOnlyBacking && _isOpen;
 
     /// <inheritdoc />
     public override long Length
@@ -312,7 +299,6 @@ internal sealed class MemoryByteStream : Stream
         if (disposing && _isOpen)
         {
             _isOpen = false;
-            _writable = false;
             // Don't set buffer to null - allow TryGetBuffer, GetBuffer & ToArray to work.
             // That the stream should no longer be used for I/O
             // doesn't mean the underlying memory should be invalidated.
@@ -327,7 +313,7 @@ internal sealed class MemoryByteStream : Stream
 
     private void EnsureWriteable()
     {
-        if (_isReadOnlyBacking || !_writable)
+        if (_isReadOnlyBacking)
             ThrowHelper.ThrowNotSupportedException_UnwritableStream();
 
         ObjectDisposedException.ThrowIf(!_isOpen, this);

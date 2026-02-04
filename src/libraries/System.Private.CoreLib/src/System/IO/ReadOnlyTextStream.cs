@@ -238,14 +238,16 @@ internal sealed class ReadOnlyTextStream : Stream
         int currentBytePosition = 0;
         var streamBuffer = SourceSpan;
         int iterationCount = 0;
-        const int MaxIterations = 100000;
+
+        // Calculate max iterations based on string length: one iteration per 1024 chars, plus buffer
+        int maxIterations = ((_length + 1023) / 1024) + 16;
 
         // Re-encode from start until we reach target byte position
         while (currentBytePosition < targetBytePosition && _charPosition < _length)
         {
-            if (++iterationCount > MaxIterations)
+            if (++iterationCount > maxIterations)
             {
-                throw new InvalidOperationException("Stream resynchronization exceeded maximum iterations.");
+                throw new InvalidOperationException(SR.InvalidOperation_StreamResyncExceededMaxIterations);
             }
 
             int charsToEncode = Math.Min(1024, _length - _charPosition);
