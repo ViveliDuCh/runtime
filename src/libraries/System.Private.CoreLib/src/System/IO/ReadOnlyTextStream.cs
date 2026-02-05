@@ -37,7 +37,6 @@ internal sealed class ReadOnlyTextStream : Stream
     /// Initializes a new instance of the <see cref="ReadOnlyTextStream"/> class with the specified source ReadOnlyMemory{char} using UTF-8 encoding.
     /// </summary>
     /// <param name="source">The ReadOnlyMemory{char} to read from.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
     public ReadOnlyTextStream(ReadOnlyMemory<char> source)
         : this(source, Encoding.UTF8)
     {
