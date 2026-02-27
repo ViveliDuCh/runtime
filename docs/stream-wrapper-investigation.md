@@ -308,6 +308,37 @@ internal sealed unsafe class PinnedBufferMemoryStream : UnmanagedMemoryStream
 
 Note: It actually derives from `UnmanagedMemoryStream`, **not** `MemoryStream`. This is because it needs pointer-based access. This precedent confirms that even within the runtime, new stream implementations derive from the most appropriate base — not necessarily `MemoryStream`.
 
+### 6.1. Comprehensive Base Class Suitability Analysis
+
+Every direct `Stream` subclass in `System.Private.CoreLib/src/System/IO/` was evaluated as a potential base for a `Memory<byte>` wrapper:
+
+| Candidate Base | Sealed? | Field Visibility | Backing Store | Suitable? | Why |
+|---|---|---|---|---|---|
+| **`Stream`** (abstract) | N/A | N/A (abstract) | N/A | ✅ **Best fit** | Clean slate, no baggage, sealed derivative devirtualizes |
+| [`MemoryStream`](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/MemoryStream.cs#L22) | Open | **All private** | `byte[]` | ❌ | 0 methods reusable, +40B dead weight, GetType() guards penalize (see §3–5) |
+| [`UnmanagedMemoryStream`](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/UnmanagedMemoryStream.cs#L34) | Open | **All private** (despite protected `Initialize()`) | `byte*` / `SafeBuffer` | ❌ | Requires `unsafe byte*` or `SafeBuffer`; can't hold managed `Memory<byte>` |
+| [`BufferedStream`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/IO/BufferedStream.cs) | **Sealed** | All private | Wraps another `Stream` | ❌ | Sealed — cannot inherit. Also wrong semantics (adds buffering layer over existing stream) |
+| [`FileStream`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/IO/FileStream.cs) | Open | Private | `FileStreamStrategy` | ❌ | File I/O semantics, completely unrelated |
+
+#### Why `UnmanagedMemoryStream` is a near-miss but still wrong
+
+`UnmanagedMemoryStream` is the **only** Stream subclass designed for external subclassing — it has:
+- A `protected UnmanagedMemoryStream()` empty constructor ([line 50](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/UnmanagedMemoryStream.cs#L50))
+- `protected void Initialize(SafeBuffer, ...)` ([line 80](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/UnmanagedMemoryStream.cs#L80))
+- `protected unsafe void Initialize(byte*, ...)` ([line 151](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/UnmanagedMemoryStream.cs#L151))
+
+However, its fields are **still all private** (`_buffer`, `_mem`, `_capacity`, `_length`, `_position`, `_access`, `_isOpen`) — [lines 36-44](https://github.com/dotnet/dotnet/blob/b0f34d51fccc69fd334253924abd8d6853fad7aa/src/runtime/src/libraries/System.Private.CoreLib/src/System/IO/UnmanagedMemoryStream.cs#L36-L44). A derived class can call `Initialize()` but cannot afterwards interact with the stored state except through the public/protected virtual methods. More critically:
+
+1. **Backing store mismatch**: `UnmanagedMemoryStream` stores `unsafe byte*` pointers. `Memory<byte>` is a managed abstraction that may or may not be pinnable. Pinning `Memory<byte>` to get a pointer would require keeping a `GCHandle` alive — exactly what `PinnedBufferMemoryStream` does, but that approach carries GC-pinning costs and finalizer overhead.
+
+2. **Semantic mismatch**: `UnmanagedMemoryStream` is designed for memory that _outlives_ the stream and is _externally managed_. `Memory<byte>` from a `MemoryManager<byte>` may have lifetime semantics tied to `IDisposable` — the stream wrapper should not assume the memory is permanently valid.
+
+3. **The same override-everything problem**: Even if we could `Initialize()` with a pinned pointer, all the read/write methods access `_mem` (private), so we'd still need to override everything — the same situation as with `MemoryStream`.
+
+#### Conclusion
+
+**No existing Stream subclass in the runtime provides a useful base for wrapping `Memory<byte>`.** The `Stream` abstract class itself is the correct base — it provides the public API contract with zero baggage, and a `sealed` derivative enables full devirtualization by the JIT.
+
 ---
 
 ## 7. The `is MemoryStream` Compatibility Question
