@@ -426,3 +426,13 @@ Full benchmark source:
 - [`DirectFromStreamApproach.cs`](https://github.com/ViveliDuCh/runtime/blob/stream-investigation/benchmarks/StreamWrapperBenchmarks/DirectFromStreamApproach.cs)
 - [`MemoryStreamDerivedApproach.cs`](https://github.com/ViveliDuCh/runtime/blob/stream-investigation/benchmarks/StreamWrapperBenchmarks/MemoryStreamDerivedApproach.cs)
 - [`Program.cs`](https://github.com/ViveliDuCh/runtime/blob/stream-investigation/benchmarks/StreamWrapperBenchmarks/Program.cs) (benchmark definitions)
+
+---
+
+## 11. Related Investigation: Abstract Base Class Refactoring
+
+A follow-up investigation explores a **third approach**: refactoring `MemoryStream` into an abstract base class with two sealed concrete implementations (`ArrayMemoryStream` and `MemoryMemoryStream`).
+
+**Key finding**: `ArrayMemoryStream` (the `MemoryStream` equivalent) shows **zero regression** — many operations are 10–34% faster due to `sealed` devirtualization. This avoids the problems that sank [dotnet/runtime PR #84103](https://github.com/dotnet/runtime/pull/84103).
+
+Full details: [`stream-refactor-investigation.md`](https://github.com/ViveliDuCh/runtime/blob/stream-refactor-investigation/docs/stream-refactor-investigation.md) on the [`stream-refactor-investigation`](https://github.com/ViveliDuCh/runtime/tree/stream-refactor-investigation) branch.

@@ -1,0 +1,16 @@
+{
+    "servers": {
+        "microsoftdocs": {
+            "type": "http",
+            "url": "https://learn.microsoft.com/api/mcp"
+        },
+        "baronfel-binlog": {
+            "type": "stdio",
+            "command": "dnx",
+            "args": [
+                "baronfel.binlog.mcp@0.0.12",
+                "--yes"
+            ]
+        }
+    }
+}
