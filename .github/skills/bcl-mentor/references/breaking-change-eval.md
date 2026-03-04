@@ -122,7 +122,22 @@ The issue must include:
 | Changed internal helper method | 4 | Accepted |
 | Added new overload (could affect resolution) | 2 | Check source compat |
 | Changed default value of optional param | 2 | Risk-benefit analysis |
+| Relaxed parsing/validation defaults | 2 | **Security review required** — see below |
 | Obsoleted a method | Not breaking | Accepted (with proper attributes) |
+
+## Security-Sensitive Breaking Changes
+
+Some behavior changes have **security implications** beyond compat. These require extra scrutiny:
+
+| Pattern | Risk | What to Check |
+|---|---|---|
+| Relaxing input validation | Wider attack surface | Could untrusted input reach this path? |
+| Adding lenient parsing options | Desynced deserialization | Do frontend and backend share this parser? |
+| Enabling `$ref`/`$id` or reference preservation | Graph injection | Can adversary control object graph edges? |
+| Adding type-based polymorphic deserialization | Remote code execution | Is the type set constrained? |
+| Removing an exception that was thrown on invalid input | Silent data corruption | Does downstream code assume the exception? |
+
+**Reference**: @GrabYourPitchforks' feedback on [dotnet/skills#200](https://github.com/dotnet/skills/pull/200#discussion_r2885261042) — relaxed defaults that "increase attack surface" should never be promoted as "try it and see."
 
 ## Checking for Source Breaking Changes
 

@@ -62,6 +62,15 @@ Community PR arrives
 
 ## Step 3: Code Review Checklist
 
+### Security
+
+- [ ] No new deserialization of untrusted input without validation
+- [ ] No `TypeNameHandling`-style patterns (type-based polymorphic deserialization from untrusted JSON)
+- [ ] No relaxed parsing defaults (`AllowTrailingCommas`, `ReadCommentHandling.Skip`) on paths handling untrusted input
+- [ ] Unsafe code (`Unsafe.BitCast`, `Unsafe.As`, pointer operations) reviewed for bounds and type safety
+- [ ] No accidental public API surface leaks (check ref assembly diff)
+- [ ] If adding overloads: verify no overload resolution ambiguity that could silently route to wrong method
+
 ### Coding Conventions
 
 Per [`.editorconfig`](https://github.com/dotnet/runtime/blob/main/.editorconfig) and [copilot-instructions.md](https://github.com/dotnet/runtime/blob/main/.github/copilot-instructions.md):
