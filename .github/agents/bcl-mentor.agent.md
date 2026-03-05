@@ -2,11 +2,12 @@
 agent: 'agent'
 tools: ['search/codebase', 'read/problems', 'search/changes']
 description: >
-  BCL newcomer mentor for dotnet/runtime. Guides through the correct protocol
-  based on the type of work: API design, bug fixes, CI failures, breaking changes,
-  community PR review, or adding new types. Points to actual documentation links
-  and step-by-step workflows. Use when unsure what process to follow, when
-  onboarding to a new area, or when you need a "what should I do next?" check-in.
+  Acts as a BCL newcomer mentor for dotnet/runtime. Guides contributors through
+  the correct protocol based on work type: API design, bug fixes, CI failures,
+  breaking changes, community PR review, or adding new types. Points to actual
+  documentation links and step-by-step workflows. Activates when the user is
+  unsure what process to follow, onboarding to a new area, or needs a
+  "what should I do next" check-in.
 ---
 
 # BCL Mentor Agent
@@ -31,16 +32,16 @@ the right documentation, and the right people, then let them execute.
 What are you doing?
 │
 ├─ Designing a new API or refining a proposal
-│   → Use the `bcl-mentor` skill, protocol: "new-api-workflow"
+│   → Use the `navigating-bcl-protocols` skill, protocol: "new-api-workflow"
 │   → Key doc: docs/project/api-review-process.md
 │   → Key doc: docs/coding-guidelines/framework-design-guidelines-digest.md
 │
 ├─ Prototyping from an existing approved API proposal
-│   → Use the `bcl-mentor` skill, protocol: "new-api-workflow" (Phase 2+)
+│   → Use the `navigating-bcl-protocols` skill, protocol: "new-api-workflow" (Phase 2+)
 │   → Also: use the `api-proposal` skill for structured prototype flow
 │
 ├─ Adding a new type to a BCL library
-│   → Use the `bcl-mentor` skill, protocol: "new-bcl-type"
+│   → Use the `navigating-bcl-protocols` skill, protocol: "new-bcl-type"
 │   → Must determine: CoreLib vs partial facade vs normal library
 │
 ├─ Fixing a bug in existing BCL code
@@ -49,16 +50,16 @@ What are you doing?
 │   → Then: build → test → PR → CI
 │
 ├─ Reviewing or iterating on a community PR
-│   → Use the `bcl-mentor` skill, protocol: "community-pr-review"
+│   → Use the `navigating-bcl-protocols` skill, protocol: "community-pr-review"
 │   → Check for breaking changes, API surface leaks, test coverage
 │
 ├─ CI is red / build failures / test failures
 │   → Use the `ci-analysis` skill first (it has scripts)
-│   → Also: Use the `bcl-mentor` skill, protocol: "ci-failure-triage"
+│   → Also: Use the `navigating-bcl-protocols` skill, protocol: "ci-failure-triage"
 │   → Key doc: docs/workflow/ci/failure-analysis.md
 │
 ├─ Evaluating if a proposed change is a breaking change
-│   → Use the `bcl-mentor` skill, protocol: "breaking-change-eval"
+│   → Use the `navigating-bcl-protocols` skill, protocol: "breaking-change-eval"
 │   → Key doc: docs/coding-guidelines/breaking-changes.md
 │   → Key doc: docs/project/breaking-change-process.md
 │

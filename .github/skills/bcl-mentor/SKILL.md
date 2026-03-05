@@ -1,21 +1,19 @@
 ---
-name: bcl-mentor
+name: navigating-bcl-protocols
 description: >
-  Navigate dotnet/runtime protocols and documented processes. Routes to the
-  correct workflow based on work type (API design, bug fix, CI failure, breaking
-  change, new type, community PR). Points to actual upstream documentation links
-  and step-by-step procedures. USE WHEN: unsure what process to follow, need
-  "what should I do next" guidance, onboarding to a new BCL area, evaluating
-  a community contribution, or triaging a CI failure. DO NOT USE FOR: actual
-  code implementation (use code-review, api-proposal, or ci-analysis skills
-  instead), performance benchmarking, or MSBuild build analysis.
+  Routes dotnet/runtime contributors to the correct documented workflow based on
+  work type: API design, bug fixes, CI failures, breaking changes, community PR
+  review, or adding new BCL types. Provides step-by-step procedures with links
+  to upstream documentation. Use when unsure what process to follow, onboarding
+  to a new BCL area, evaluating a community contribution, or triaging CI failures.
+  Do not use for code implementation, performance benchmarking, or build analysis.
 ---
 
-# BCL Mentor Skill — Protocol Router
+# BCL Protocol Navigator
 
-Guide a dotnet/runtime contributor through the correct documented process based
-on the type of work they're doing. This skill identifies the work type, routes
-to the appropriate protocol, and provides step-by-step guidance with links.
+Routes a dotnet/runtime contributor to the correct documented process based on
+the type of work. Identifies the work type, loads the appropriate protocol
+reference, and provides step-by-step guidance with links.
 
 ## When to Use This Skill
 

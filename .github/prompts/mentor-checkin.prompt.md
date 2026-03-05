@@ -21,6 +21,6 @@ Based on what you find, suggest the single most important next action:
 - If no open PRs → ask what I'm working on and route to the right protocol
 - If I have uncommitted changes → help me decide if they're ready to commit
 
-Use the `bcl-mentor` skill for protocol routing and the resource index for links.
+Use the `navigating-bcl-protocols` skill for protocol routing and the resource index for links.
 
 Keep the response concise — summary + one recommended action + one link.
