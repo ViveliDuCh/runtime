@@ -70,7 +70,26 @@ Load the appropriate reference document and walk through it step by step.
 | Breaking change? | Any | 4-bucket classification → [breaking-change-eval.md](references/breaking-change-eval.md) |
 | Community PR | Any | Checklist: API surface, tests, breaking changes, conventions → [community-pr-review.md](references/community-pr-review.md) |
 
-## Step 4: Provide Links and Next Actions
+## Step 4: Enrich with MCP Tools (Prefer Over Static Summaries)
+
+Before summarizing a document yourself, check if an MCP server can provide
+the authoritative content. This keeps responses current and avoids stale
+baked-in summaries.
+
+| Need | MCP Server | Tool Call |
+|------|-----------|-----------|
+| .NET API docs, FDG, compat rules | `microsoftdocs` | `microsoftdocs:search` with query |
+| Upstream repo docs (breaking-changes.md, etc.) | `github` | `github:get_file_contents` with owner/repo/path |
+| CI pipeline status or history | `azure-devops` | `azure-devops:*` for dnceng-public pipelines |
+| NuGet package metadata | `nuget` | `nuget:*` for package versions/dependencies |
+| Build log analysis | `baronfel-binlog` | `baronfel-binlog:*` for MSBuild binlog parsing |
+
+**When to use MCP vs static references:**
+- Process steps, decision trees, checklists → use the reference files in this skill
+- Documentation content the user needs to read → fetch live via MCP
+- External tools with no MCP (Helix, apisof.net, grep.app) → provide direct links from [resource-index.md](references/resource-index.md)
+
+## Step 5: Provide Links and Next Actions
 
 Always end with:
 1. **Specific link(s)** to the relevant upstream documentation
@@ -84,10 +103,11 @@ This skill is a **router and advisor**. It does NOT:
 - Run CI analysis scripts (use `ci-analysis` skill)
 - Create API proposals (use `api-proposal` skill)
 - Review code (use `code-review` skill)
+- Summarize docs that an MCP server can provide live
 
 It DOES:
 - Tell you WHICH skill to use
-- Tell you WHAT documentation to read
+- Tell you WHAT documentation to read (or which MCP to query)
 - Tell you WHAT steps to follow
 - Tell you WHO to ask
 - Provide the actual links to everything above

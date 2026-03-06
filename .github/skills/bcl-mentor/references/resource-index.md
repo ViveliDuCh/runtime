@@ -2,6 +2,13 @@
 
 Master index of all documentation, processes, and tools relevant to BCL development.
 
+> **MCP Preference:** When the user needs the *content* of a document below (not
+> just the link), prefer querying the appropriate MCP server over summarizing from
+> memory. GitHub-hosted docs → `github:get_file_contents`. Microsoft Learn docs →
+> `microsoftdocs:search`. CI pipelines → `azure-devops:*`. Packages → `nuget:*`.
+> Build logs → `baronfel-binlog:*`. Only fall back to static links for external
+> tools with no MCP coverage (Helix, apisof.net, grep.app).
+
 ## Coding Guidelines
 
 | Document | URL | When to Use |
