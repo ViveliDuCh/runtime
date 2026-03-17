@@ -2,19 +2,20 @@
 
 ## Objective
 
-Evaluate an `IStreamable` interface-based design (using struct implementations + generic
-specialization) as an alternative approach for providing standardized `Stream` wrappers
-over memory and text-based types in .NET. This explores whether a single generic
-`StreamableStream<T>` adapter can replace the multiple dedicated `Stream` subclasses
-currently proposed, achieving equivalent performance with better extensibility.
+Explore an `IStreamable` interface using **Default Interface Methods (DIMs)** as a
+standardized extensibility contract — analogous to how `IEnumerable<T>` standardizes
+iteration: a type implements one core method (`GetEnumerator()`) and gets the entire
+LINQ surface for free. The goal is to evaluate whether `IStreamable` could let types
+like `string`, `Memory<byte>`, `ReadOnlyMemory<byte>`, `ReadOnlySequence<byte>`,
+`ReadOnlyMemory<char>` implement a few core members (`Read`, `Length`, `Position`)
+and automatically get `ReadByte()`, `Seek()`, `CopyTo()`, etc. via DIM defaults —
+standardizing a common developer need currently served only by third-party libraries
+([CommunityToolkit.HighPerformance](https://github.com/CommunityToolkit/dotnet),
+[Nerdbank.Streams](https://github.com/dotnet/Nerdbank.Streams)).
 
 This exploration was prompted by the benchmarking work in
 [dotnet/runtime#124990 review](https://github.com/dotnet/runtime/pull/124990#pullrequestreview-3878064715)
-(MemoryStream Memory constructors PR), which used
-[Jozkee/performance benchmark code](https://github.com/Jozkee/performance/blob/c6770508bf4f703f400c13e6fe1dd481094881d1/src/benchmarks/micro/libraries/System.IO/MemoryStreamTests.cs)
-to validate the MemoryStream delegation pattern. That work demonstrated the viability of
-different code organization patterns for memory-backed streams, raising the question of
-whether a more generalized interface-based approach could unify them.
+and the stream wrapper prototypes in [ViveliDuCh/runtime PR #1](https://github.com/ViveliDuCh/runtime/pull/1).
 
 ## Background
 
@@ -54,29 +55,133 @@ The proposal lists four alternative API shapes (static methods on Stream, extens
 methods on the types, a StreamFactory class, or moving ReadOnlySequence to CoreLib),
 but all share the same implementation architecture: separate dedicated Stream subclasses.
 
-### This Exploration: IStreamable Alternative
+### This Exploration: IStreamable with DIMs
 
-Instead of N separate `Stream` subclasses, define a **single interface** (`IStreamable`)
-that captures the core stream data-access contract, with **struct implementations** for
-each backing type, adapted to `Stream` via a **single generic class**
-`StreamableStream<TStreamable>`.
+The core idea: define an `IStreamable` interface where implementers provide only
+**3 core members** and get everything else from **DIM defaults**:
+
+```csharp
+interface IStreamable
+{
+    // Core — MUST implement (like IEnumerable.GetEnumerator)
+    long Length { get; }
+    long Position { get; set; }
+    int Read(Span<byte> buffer);
+
+    // DIM defaults — get these for FREE (like LINQ on IEnumerable)
+    int ReadByte() { /* calls Read() with 1-byte span */ }
+    long Seek(long offset, SeekOrigin origin) { /* uses Position + Length */ }
+    void CopyTo(Stream destination) { /* reads in loop */ }
+    bool CanRead => true;
+    bool CanWrite => false;
+    bool CanSeek => true;
+    void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+    void WriteByte(byte value) => throw new NotSupportedException();
+    void SetLength(long value) => throw new NotSupportedException();
+}
+```
+
+A minimal read-only implementation would be just ~15 lines:
+
+```csharp
+struct ReadOnlyMemoryStreamableMinimal : IStreamable
+{
+    private readonly ReadOnlyMemory<byte> _memory;
+    private int _position;
+    public long Length => _memory.Length;
+    public long Position { get => _position; set => _position = (int)value; }
+    public int Read(Span<byte> buffer) { /* copy from _memory */ }
+    // ReadByte, Seek, CopyTo, etc. — all from DIMs, zero code needed
+}
+```
+
+The adapter `StreamableStream<T> where T : struct, IStreamable` wraps any IStreamable
+struct as a `Stream`, combining DIM defaults with JIT generic specialization.
+
+## Critical Finding: DIM + Mutable Struct = Broken Semantics
+
+> **⚠️ SHOWSTOPPER**: Default Interface Methods on mutable structs through generic
+> constraints cause **silent infinite loops** due to CLR boxing behavior.
+
+### The Problem
+
+When `StreamableStream<T>` calls `_streamable.ReadByte()` on a struct `T` that doesn't
+override `ReadByte()` (relying on the DIM default), the CLR emits a `constrained callvirt`
+instruction. For DIM methods not implemented by the struct, the runtime **boxes the
+struct** to dispatch to the interface's default method body. The DIM's `ReadByte()`
+then calls `this.Read(...)`, which mutates `_position` on the **boxed copy**. The box
+is discarded after the call. The original struct's `_position` never advances.
+
+### Proof
+
+```
+Test: StreamableStream<ReadOnlyMemoryStreamableMinimal> over [1, 2, 3]
+  stream.ReadByte() → 1  (reads position 0, box advances to 1, box discarded)
+  stream.ReadByte() → 1  (reads position 0 again, same result)
+  stream.ReadByte() → 1  (infinite loop — position never advances)
+  stream.ReadByte() → 1  ...
+
+Control: StreamableStream<ReadOnlyMemoryStreamable> (with explicit ReadByte override)
+  stream.ReadByte() → 1  (direct call, no boxing, position advances)
+  stream.ReadByte() → 2
+  stream.ReadByte() → 3
+  stream.ReadByte() → -1 (end of data)
+```
+
+### Root Cause
+
+The CLR specification for `constrained. callvirt` ([ECMA-335 III.2.1](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)):
+
+> If `thisType` is a value type and `thisType` does not implement `method` then
+> ptr is dereferenced, boxed, and passed as the 'this' pointer to the callvirt
+> method instruction.
+
+This means for any DIM method that a value type doesn't explicitly implement:
+1. The value is boxed (copied to the heap)
+2. The DIM body runs on the boxed copy
+3. Any state mutations (`_position++`) happen on the boxed copy
+4. The boxed copy is discarded — original struct is unchanged
+5. Next call: same state as before → infinite loop for stateful operations
+
+### Implications
+
+This makes the "IEnumerable analogy" fundamentally impossible for mutable value types:
+
+| Pattern | IEnumerable + LINQ | IStreamable + DIMs |
+|---|---|---|
+| Core method | `GetEnumerator()` → returns new enumerator | `Read(Span<byte>)` → mutates position |
+| Default methods | Extension methods on `IEnumerable<T>` | DIMs on interface |
+| State mutation | Enumerator is a separate object — caller doesn't mutate | Stream IS the state — every call mutates position |
+| Boxing issue | Not relevant — enumerator is created fresh | **Fatal** — boxing copies position state |
+
+The key difference: `IEnumerable<T>` extension methods (LINQ) create **new objects**
+(enumerators, lazy sequences). They don't mutate the source. `IStreamable` DIMs must
+**mutate** the implementer's position on every read — which breaks when boxing occurs.
+
+### Workarounds Considered
+
+| Workaround | Feasibility |
+|---|---|
+| Use class types instead of structs | ✅ Works but loses generic specialization perf benefit |
+| Require implementers to override ALL DIMs | ✅ Works but defeats the "free defaults" purpose |
+| Make IStreamable a class (abstract base) | ✅ Works but then it's just `Stream` with different methods |
+| Use `ref` parameters for state | ❌ Not possible in interface DIMs |
+| Use C# 13 `allows ref struct` constraint | ❌ `ref struct` still has boxing issues with DIMs |
+
+**None of the workarounds preserve both goals** (free DIM defaults + mutable state
+correctness + performance).
 
 ### Points Considered in This Assessment
 
-The following dimensions were explicitly evaluated:
+Despite the showstopper above, the following dimensions were fully evaluated:
 
-1. **Performance** — Does the generic approach match, exceed, or fall behind dedicated
-   classes across all stream operations?
-2. **Allocation / instance size** — What is the memory footprint difference?
-3. **Code reuse** — How much duplicated code does the generic approach eliminate?
-4. **Extensibility** — Can the interface be meaningfully extended by new types?
-5. **Public API viability** — Can/should IStreamable be a public contract?
+1. **DIM default behavior** — Does the DIM pattern work correctly for mutable types?
+2. **DIM dispatch performance** — What is the overhead of DIM calls through generic constraints?
+3. **Override performance** — When implementers override DIMs, is it equivalent to dedicated classes?
+4. **Code reuse** — How much boilerplate do DIMs actually save?
+5. **Public API viability** — Could IStreamable be a public extensibility contract?
 6. **Text stream fit** — Does the pattern work for encoding-based streams?
-7. **Assembly layering** — How does the pattern interact with CoreLib / System.Memory boundaries?
-8. **DIM (Default Interface Methods)** — Why DIM was considered and why the struct+generic
-   approach was chosen instead.
-9. **Debuggability / developer experience** — Stack traces, type names, IntelliSense.
-10. **Mutable struct semantics** — Correctness risks from value-type position tracking.
+7. **Comparison with IEnumerable pattern** — Why the analogy breaks down.
 
 ## Methodology
 
@@ -612,97 +717,104 @@ feature.
 
 ## Point 8: Trade-offs Summary
 
-| # | Dimension | Dedicated Classes | IStreamable + Generic | Winner |
+| # | Dimension | Dedicated Classes | IStreamable + DIMs | Winner |
 |---|---|---|---|---|
-| 1 | **Performance** | Baseline | **Equivalent** (0.91-1.06x, benchmarked) | Tie |
-| 2 | **Allocation** | 48 B per instance | 56 B per instance (+17%) | Dedicated (marginal) |
-| 3 | **Code reuse** | ~95 lines duplicated per type | Shared in StreamableStream&lt;T&gt; | IStreamable |
-| 4 | **Extensibility** | New Stream subclass per type | New struct per type | Tie |
-| 5 | **Complexity** | Simple inheritance | Generic specialization + struct mutation | Dedicated |
-| 6 | **Text streams** | ✅ Natural fit | ⚠️ Large struct, reduced benefit | Dedicated |
-| 7 | **ReadOnlySequence** | Extension method (current proposal) | Cross-assembly generic instantiation | Dedicated |
-| 8 | **Public API surface** | Factory methods on Stream | Same (IStreamable stays internal) | Tie |
-| 9 | **Debuggability** | Direct class names in stack traces | `StreamableStream<ReadOnlyMemoryStreamable>` in stack traces | Dedicated |
-| 10 | **Reviewability** | Each class self-contained, easy to review | Requires understanding generic specialization pattern | Dedicated |
+| 1 | **DIM correctness** | N/A — no DIMs | ❌ **Fatal**: DIM + mutable struct = infinite loop | Dedicated |
+| 2 | **Performance (overrides)** | Baseline | Equivalent (0.91-1.06x, benchmarked) | Tie |
+| 3 | **Performance (DIMs)** | N/A | ❌ Non-functional (infinite loop) | Dedicated |
+| 4 | **Allocation** | 48 B per instance | 56 B per instance (+17%) | Dedicated (marginal) |
+| 5 | **Code reuse** | ~95 lines duplicated per type | Shared in StreamableStream&lt;T&gt; | IStreamable |
+| 6 | **"Free defaults" (IEnumerable analogy)** | Not applicable | ❌ Broken by boxing | Dedicated |
+| 7 | **Text streams** | ✅ Natural fit | ⚠️ Large struct, reduced benefit | Dedicated |
+| 8 | **ReadOnlySequence** | Extension method (current proposal) | Cross-assembly generic | Dedicated |
+| 9 | **Public extensibility** | Factory methods on Stream | Struct constraint prevents practical public use | Tie |
+| 10 | **Complexity** | Simple inheritance | Generic specialization + boxing pitfalls | Dedicated |
 
-**Score**: Dedicated wins 5 dimensions, IStreamable wins 1, and 4 are ties.
+**Score**: Dedicated wins 7 dimensions, IStreamable wins 1 (code reuse), and 2 are ties.
 
 ## Point 9: Limitations Encountered
 
-1. **Struct mutation semantics** (correctness risk): Mutable structs implementing
-   `IStreamable` require careful handling. The struct must be stored as a **field** (not a
-   local, not boxed) to preserve position state across method calls. This is a footgun
-   for any future developer modifying the code — incorrectly passing the struct by value
-   or storing it in a readonly field would introduce silent bugs. Dedicated classes
-   eliminate this entire class of bugs.
+1. **⚠️ SHOWSTOPPER — DIM + mutable struct boxing** (correctness bug): The core promise
+   of the DIM approach — "implement Read, get ReadByte for free" — is fundamentally
+   broken. The CLR boxes value types when dispatching to DIM methods through constrained
+   generic calls, causing position mutations to be lost. This produces silent infinite
+   loops. This was proven experimentally (see "Critical Finding" section above).
 
-2. **No zero-cost outer dispatch**: While the inner dispatch (IStreamable → concrete
-   struct) is eliminated by generic specialization, the outer dispatch (caller →
-   StreamableStream → Stream) still goes through virtual method tables. This is
-   unavoidable for any Stream subclass. It means the IStreamable pattern cannot provide
-   a performance advantage over dedicated classes — only parity.
+2. **When implementers override all DIMs, the pattern works** but defeats the purpose.
+   If every struct must provide `ReadByte()`, `Seek()`, `CopyTo()`, `Write()` (throws),
+   `WriteByte()` (throws), `SetLength()` (throws), then the DIMs provide zero value —
+   the interface is just an abstract contract, not a source of free behavior.
 
-3. **Text encoding doesn't fit the pattern well**: `ReadOnlyTextStream` needs
-   stateful encoding (Encoder, byte buffer, char position tracking), producing a
-   struct >64 bytes with reference-type fields. This negates the value-type advantages
-   (no stack allocation benefit, expensive copies, JIT may not inline). For 2 of the
-   5 target types (string, ReadOnlyMemory&lt;char&gt;), the IStreamable pattern provides
-   no benefit.
+3. **The IEnumerable analogy is structurally invalid**: LINQ extension methods on
+   `IEnumerable<T>` create new objects (enumerators, lazy sequences) — they don't mutate
+   the source. IStreamable DIMs must mutate the implementer's position on every read,
+   which breaks under value-type boxing.
 
-4. **Not publicly extensible in practice**: While the interface is technically
-   implementable by external code, the struct + generic constraint pattern means
-   consumers would need to instantiate `StreamableStream<TheirStruct>` explicitly,
-   which is awkward vs the proposed factory method pattern. And since `Stream` remains
-   the consumer contract, there's no scenario where a consumer would benefit from
-   knowing about `IStreamable`.
+4. **Text encoding doesn't fit**: `ReadOnlyTextStream` needs stateful encoding
+   (Encoder, byte buffer, char position tracking, resync logic), producing a struct
+   >64 bytes with reference-type fields. The DIM defaults (which assume simple
+   `Read` → `ReadByte` delegation) can't express the encoding pipeline.
 
-5. **Allocation overhead**: 56 bytes vs 48 bytes (dedicated) per instance due to struct
-   alignment padding in the generic class. Marginal in isolation, but the dedicated
-   approach is strictly better on this dimension.
+5. **Allocation overhead**: 56 bytes vs 48 bytes (dedicated) per instance.
 
-6. **Debuggability**: Stack traces show `StreamableStream<ReadOnlyMemoryStreamable>.Read`
-   instead of `ReadOnlyMemoryStream.Read`. While not a blocking issue, it adds cognitive
-   load when debugging. Exception messages referencing the generic type are also less
-   readable.
+6. **Debuggability**: Generic type names in stack traces add cognitive load.
 
-7. **JIT code size**: The JIT generates separate code for each `StreamableStream<T>`
-   instantiation. With 5 backing types, this means 5 copies of the adapter's validation
-   and async wrapping logic in the JIT output. Dedicated classes share no code at the
-   machine code level either (each class gets its own vtable entries), so this is roughly
-   equivalent, but worth noting that the generic approach does not save JIT compilation
-   time or code size.
+7. **Not publicly extensible**: The struct constraint + boxing pitfalls make this
+   unsuitable as a public API. External implementers would hit the DIM boxing bug
+   unless extensively documented and warned against.
 
 ## Conclusion
 
-### Finding 1: Generic Specialization Achieves Performance Parity
+### Finding 1: The DIM "IEnumerable Experience" Is Impossible for Stream-Like Types
 
-The benchmarks definitively show that `StreamableStream<TStreamable>` and dedicated
-`Stream` subclasses produce **equivalent performance** across all measured operations
-(0.91x to 1.06x ratio range). The JIT's generic specialization for struct type parameters
-successfully eliminates interface dispatch overhead, confirming the pattern used by
-CommunityToolkit.HighPerformance.
+The central goal of this exploration — providing free default behavior via DIMs so
+implementers write only `Read` + `Length` + `Position` — **does not work** for mutable
+value types. The CLR's boxing behavior for DIM dispatch through generic constraints
+causes silent infinite loops when DIM methods mutate state.
 
-**Evidence**: All 10 benchmark data points in the results section.
-**Implication**: Performance is not a differentiating factor between the approaches.
+**Evidence**: The `StreamableStream<ReadOnlyMemoryStreamableMinimal>` test returns
+`1, 1, 1, 1...` (position never advances) while the override version correctly returns
+`1, 2, 3, -1`. See "Critical Finding" section.
 
-### Finding 2: The Pattern Has Significant Practical Limitations
+**Root cause**: ECMA-335 III.2.1 specifies that `constrained. callvirt` on a value type
+that does not implement the method boxes the value. DIM method bodies then operate on
+the boxed copy, not the original.
 
-For the specific use case being addressed (wrapping `Memory<byte>`,
-`ReadOnlyMemory<byte>`, `string`, `ReadOnlyMemory<char>`, `ReadOnlySequence<byte>`
-as streams):
+### Finding 2: With All DIMs Overridden, It Reduces to the Previous Assessment
 
-1. **Performance is equivalent, not better.** The generic approach doesn't outperform
-   dedicated classes — it matches them. When two approaches have equal performance, the
-   simpler one should be preferred (per the general engineering principle of choosing
-   the simplest correct solution).
+When implementers override all performance-sensitive DIMs (ReadByte, CopyTo, etc.),
+the pattern works correctly and achieves performance parity with dedicated classes
+(0.91-1.06x ratio). But at that point:
+- The DIMs provide zero value (all overridden)
+- The code savings are negligible (~95 lines of boilerplate per type)
+- The complexity cost remains (generic specialization, struct mutation semantics)
 
-2. **Text streams don't fit the pattern.** The encoding pipeline required for `string` /
-   `ReadOnlyMemory<char>` → `Stream` conversion produces structs too large and complex
-   to benefit from value-type semantics. This means 2 of the 5 target types would still
-   need dedicated classes, creating a hybrid architecture that's harder to understand
-   than a uniform dedicated-class approach.
+This reduces to the same conclusion as the
+[struct+generic specialization assessment](https://github.com/ViveliDuCh/runtime/blob/dev/vivianad/istreamable-exploration/exploration/IStreamable-Exploration.md)
+from the previous iteration.
 
-3. **Extensibility is theoretical, not practical.** The IStreamable interface cannot be
+### Finding 3: Dedicated Stream Subclasses Remain the Right Design
+
+The **dedicated Stream subclass approach** (current proposal) is the right design for
+the .NET runtime:
+
+- **Correct** — no boxing pitfalls, no DIM dispatch bugs
+- **Simple** — each class is self-contained and independently understandable
+- **Equally performant** — as the benchmarks confirm across all operations
+- **Better fit for all target types** — text streams with encoding, sequences with
+  multi-segment access, all work naturally as dedicated classes
+- **Cleaner public API** — factory methods on `Stream` that return `Stream`
+
+### Where the DIM Pattern Could Work
+
+The DIM pattern for stream-like interfaces **could** work if:
+- The interface is implemented by **reference types** (classes, not structs) — boxing
+  doesn't occur, DIM methods operate on the original object
+- The interface does not require **mutable state** — e.g., metadata-only interfaces
+  where DIMs compute values from immutable properties
+- The interface is used directly (not through a generic `T : struct` constraint)
+
+For the .NET stream wrapper use case, none of these conditions hold.
    meaningfully exposed as a public API due to:
    - Mutable struct semantics creating correctness hazards (Point 4a)
    - `Stream` being the established consumer contract (Point 4b)

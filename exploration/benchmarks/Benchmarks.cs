@@ -1,7 +1,10 @@
-// Benchmarks comparing three approaches:
+// Benchmarks comparing four approaches:
 // 1. MemoryStream (baseline) - existing .NET MemoryStream
 // 2. DedicatedStream - one custom Stream class per backing type (current proposal)
-// 3. StreamableStream<T> - single generic Stream + IStreamable struct (IStreamable proposal)
+// 3. StreamableStream<T> (optimized) - IStreamable with selective overrides
+// 4. StreamableStream<T> (minimal/DIM-only) - IStreamable with ONLY DIM defaults
+//
+// The DIM-only variant shows what you get "for free" without overriding anything.
 
 using System;
 using System.IO;
@@ -20,7 +23,7 @@ public class ReadBenchmarks
     private byte[] _data = null!;
     private byte[] _readBuffer = null!;
 
-    [Params(100, 100_000)]
+    [Params(100, 10_000)]
     public int Size;
 
     [GlobalSetup]
@@ -56,6 +59,16 @@ public class ReadBenchmarks
     {
         using var s = new StreamableStream<ReadOnlyMemoryStreamable>(
             new ReadOnlyMemoryStreamable(_data));
+        int last = 0;
+        while ((last = s.ReadByte()) != -1) { }
+        return last;
+    }
+
+    [Benchmark, BenchmarkCategory("ReadByte")]
+    public int DIMOnly_ReadByte()
+    {
+        using var s = new StreamableStream<ReadOnlyMemoryStreamableMinimal>(
+            new ReadOnlyMemoryStreamableMinimal(_data));
         int last = 0;
         while ((last = s.ReadByte()) != -1) { }
         return last;
@@ -122,7 +135,7 @@ public class WriteBenchmarks
     private byte[] _data = null!;
     private byte[] _buffer = null!;
 
-    [Params(100, 100_000)]
+    [Params(100, 10_000)]
     public int Size;
 
     [GlobalSetup]
