@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>BenchmarkRun-joined-2026-03-17-00-20-25</title>
+
+<style type="text/css">
+	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+	td, th { padding: 6px 13px; border: 1px solid #ddd; text-align: right; }
+	tr { background-color: #fff; border-top: 1px solid #ccc; }
+	tr:nth-child(even) { background: #f8f8f8; }
+</style>
+</head>
+<body>
+<pre><code>
+BenchmarkDotNet v0.14.0, Windows 11 (10.0.26200.7984)
+Unknown processor
+.NET SDK 11.0.100-preview.3.26160.119
+  [Host]            : .NET 9.0.14 (9.0.1426.11910), X64 RyuJIT AVX2
+  ShortRun-.NET 9.0 : .NET 9.0.14 (9.0.1426.11910), X64 RyuJIT AVX2
+</code></pre>
+<pre><code>Job=ShortRun-.NET 9.0  Runtime=.NET 9.0  IterationCount=3  
+LaunchCount=1  WarmupCount=3  
+</code></pre>
+
+<table>
+<thead><tr><th>Type          </th><th>Method          </th><th>Categories</th><th>Size</th><th>Mean    </th><th>Error    </th><th>StdDev </th><th>Ratio</th><th>RatioSD</th><th>Gen0</th><th>Gen1</th><th>Gen2</th><th>Allocated</th><th>Alloc Ratio</th>
+</tr>
+</thead><tbody><tr><td>AllocationBenchmarks</td><td>MemoryStream_Alloc</td><td>Allocation</td><td>1000</td><td>6.973 ns</td><td>6.9593 ns</td><td>0.3815 ns</td><td>1.00</td><td>0.07</td><td>0.0051</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>AllocationBenchmarks</td><td>Dedicated_Alloc</td><td>Allocation</td><td>1000</td><td>6.395 ns</td><td>5.1160 ns</td><td>0.2804 ns</td><td>0.92</td><td>0.06</td><td>0.0038</td><td>-</td><td>-</td><td>48 B</td><td>0.75</td>
+</tr><tr><td>AllocationBenchmarks</td><td>Streamable_Alloc</td><td>Allocation</td><td>1000</td><td>8.031 ns</td><td>5.7087 ns</td><td>0.3129 ns</td><td>1.15</td><td>0.07</td><td>0.0045</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_CopyTo</td><td>CopyTo</td><td>100</td><td>38.496 ns</td><td>36.6400 ns</td><td>2.0084 ns</td><td>1.00</td><td>0.06</td><td>0.0325</td><td>-</td><td>-</td><td>408 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_CopyTo</td><td>CopyTo</td><td>100</td><td>51.325 ns</td><td>32.5426 ns</td><td>1.7838 ns</td><td>1.34</td><td>0.07</td><td>0.0312</td><td>-</td><td>-</td><td>392 B</td><td>0.96</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_CopyTo</td><td>CopyTo</td><td>100</td><td>53.605 ns</td><td>46.7618 ns</td><td>2.5632 ns</td><td>1.40</td><td>0.09</td><td>0.0318</td><td>-</td><td>-</td><td>400 B</td><td>0.98</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_CopyTo</td><td>CopyTo</td><td>100000</td><td>46,362.974 ns</td><td>33,206.4454 ns</td><td>1,820.1573 ns</td><td>1.00</td><td>0.05</td><td>31.1890</td><td>31.1890</td><td>31.1890</td><td>100163 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_CopyTo</td><td>CopyTo</td><td>100000</td><td>41,599.041 ns</td><td>13,618.5538 ns</td><td>746.4789 ns</td><td>0.90</td><td>0.03</td><td>31.1890</td><td>31.1890</td><td>31.1890</td><td>100147 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_CopyTo</td><td>CopyTo</td><td>100000</td><td>40,770.292 ns</td><td>12,425.0920 ns</td><td>681.0612 ns</td><td>0.88</td><td>0.03</td><td>31.1890</td><td>31.1890</td><td>31.1890</td><td>100155 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_ReadByte</td><td>ReadByte</td><td>100</td><td>84.801 ns</td><td>6.1903 ns</td><td>0.3393 ns</td><td>1.00</td><td>0.00</td><td>0.0050</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_ReadByte</td><td>ReadByte</td><td>100</td><td>180.716 ns</td><td>208.0684 ns</td><td>11.4049 ns</td><td>2.13</td><td>0.12</td><td>0.0038</td><td>-</td><td>-</td><td>48 B</td><td>0.75</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_ReadByte</td><td>ReadByte</td><td>100</td><td>177.852 ns</td><td>64.9488 ns</td><td>3.5601 ns</td><td>2.10</td><td>0.04</td><td>0.0043</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_ReadByte</td><td>ReadByte</td><td>100000</td><td>64,676.042 ns</td><td>51,597.1233 ns</td><td>2,828.2124 ns</td><td>1.00</td><td>0.05</td><td>-</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_ReadByte</td><td>ReadByte</td><td>100000</td><td>155,491.260 ns</td><td>117,541.7493 ns</td><td>6,442.8599 ns</td><td>2.41</td><td>0.13</td><td>-</td><td>-</td><td>-</td><td>48 B</td><td>0.75</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_ReadByte</td><td>ReadByte</td><td>100000</td><td>157,285.286 ns</td><td>62,395.8805 ns</td><td>3,420.1288 ns</td><td>2.44</td><td>0.10</td><td>-</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_ReadSpan</td><td>ReadSpan</td><td>100</td><td>9.999 ns</td><td>5.8546 ns</td><td>0.3209 ns</td><td>1.00</td><td>0.04</td><td>0.0051</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_ReadSpan</td><td>ReadSpan</td><td>100</td><td>10.681 ns</td><td>0.7646 ns</td><td>0.0419 ns</td><td>1.07</td><td>0.03</td><td>0.0038</td><td>-</td><td>-</td><td>48 B</td><td>0.75</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_ReadSpan</td><td>ReadSpan</td><td>100</td><td>10.680 ns</td><td>6.7115 ns</td><td>0.3679 ns</td><td>1.07</td><td>0.04</td><td>0.0045</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>ReadBenchmarks</td><td>MemoryStream_ReadSpan</td><td>ReadSpan</td><td>100000</td><td>1,981.349 ns</td><td>709.1657 ns</td><td>38.8718 ns</td><td>1.00</td><td>0.02</td><td>0.0038</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>ReadBenchmarks</td><td>Dedicated_ReadSpan</td><td>ReadSpan</td><td>100000</td><td>2,179.592 ns</td><td>540.6225 ns</td><td>29.6333 ns</td><td>1.10</td><td>0.02</td><td>0.0038</td><td>-</td><td>-</td><td>48 B</td><td>0.75</td>
+</tr><tr><td>ReadBenchmarks</td><td>Streamable_ReadSpan</td><td>ReadSpan</td><td>100000</td><td>1,991.650 ns</td><td>860.5586 ns</td><td>47.1701 ns</td><td>1.01</td><td>0.03</td><td>0.0038</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>MemoryStream_WriteByte</td><td>WriteByte</td><td>100</td><td>154.891 ns</td><td>59.1102 ns</td><td>3.2400 ns</td><td>1.00</td><td>0.03</td><td>0.0050</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>WriteBenchmarks</td><td>Dedicated_WriteByte</td><td>WriteByte</td><td>100</td><td>223.166 ns</td><td>262.5945 ns</td><td>14.3937 ns</td><td>1.44</td><td>0.08</td><td>0.0043</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>Streamable_WriteByte</td><td>WriteByte</td><td>100</td><td>216.105 ns</td><td>82.9365 ns</td><td>4.5460 ns</td><td>1.40</td><td>0.04</td><td>0.0043</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>MemoryStream_WriteByte</td><td>WriteByte</td><td>100000</td><td>125,077.238 ns</td><td>42,089.1777 ns</td><td>2,307.0499 ns</td><td>1.00</td><td>0.02</td><td>-</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>WriteBenchmarks</td><td>Dedicated_WriteByte</td><td>WriteByte</td><td>100000</td><td>195,974.455 ns</td><td>77,127.7157 ns</td><td>4,227.6304 ns</td><td>1.57</td><td>0.04</td><td>-</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>Streamable_WriteByte</td><td>WriteByte</td><td>100000</td><td>207,694.157 ns</td><td>56,748.1482 ns</td><td>3,110.5575 ns</td><td>1.66</td><td>0.03</td><td>-</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>MemoryStream_WriteSpan</td><td>WriteSpan</td><td>100</td><td>10.369 ns</td><td>4.1183 ns</td><td>0.2257 ns</td><td>1.00</td><td>0.03</td><td>0.0051</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>WriteBenchmarks</td><td>Dedicated_WriteSpan</td><td>WriteSpan</td><td>100</td><td>10.258 ns</td><td>7.5021 ns</td><td>0.4112 ns</td><td>0.99</td><td>0.04</td><td>0.0045</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>Streamable_WriteSpan</td><td>WriteSpan</td><td>100</td><td>10.775 ns</td><td>10.4578 ns</td><td>0.5732 ns</td><td>1.04</td><td>0.05</td><td>0.0045</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>MemoryStream_WriteSpan</td><td>WriteSpan</td><td>100000</td><td>1,972.440 ns</td><td>880.6022 ns</td><td>48.2688 ns</td><td>1.00</td><td>0.03</td><td>0.0038</td><td>-</td><td>-</td><td>64 B</td><td>1.00</td>
+</tr><tr><td>WriteBenchmarks</td><td>Dedicated_WriteSpan</td><td>WriteSpan</td><td>100000</td><td>2,065.425 ns</td><td>1,499.0781 ns</td><td>82.1695 ns</td><td>1.05</td><td>0.04</td><td>0.0038</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr><tr><td>WriteBenchmarks</td><td>Streamable_WriteSpan</td><td>WriteSpan</td><td>100000</td><td>2,076.786 ns</td><td>357.0527 ns</td><td>19.5713 ns</td><td>1.05</td><td>0.02</td><td>0.0038</td><td>-</td><td>-</td><td>56 B</td><td>0.88</td>
+</tr></tbody></table>
+</body>
+</html>
