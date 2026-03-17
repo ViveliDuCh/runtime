@@ -8,6 +8,14 @@ over memory and text-based types in .NET. This explores whether a single generic
 `StreamableStream<T>` adapter can replace the multiple dedicated `Stream` subclasses
 currently proposed, achieving equivalent performance with better extensibility.
 
+This exploration was prompted by the benchmarking work in
+[dotnet/runtime#124990 review](https://github.com/dotnet/runtime/pull/124990#pullrequestreview-3878064715)
+(MemoryStream Memory constructors PR), which used
+[Jozkee/performance benchmark code](https://github.com/Jozkee/performance/blob/c6770508bf4f703f400c13e6fe1dd481094881d1/src/benchmarks/micro/libraries/System.IO/MemoryStreamTests.cs)
+to validate the MemoryStream delegation pattern. That work demonstrated the viability of
+different code organization patterns for memory-backed streams, raising the question of
+whether a more generalized interface-based approach could unify them.
+
 ## Background
 
 ### Problem Statement
@@ -22,15 +30,19 @@ This gap is currently filled by third-party libraries:
 
 - [**CommunityToolkit.HighPerformance**](https://github.com/CommunityToolkit/dotnet):
   Provides `AsStream()` extension methods for `Memory<byte>`, `ReadOnlyMemory<byte>`,
-  `IMemoryOwner<byte>`, `IBufferWriter<byte>`.
+  `IMemoryOwner<byte>`, `IBufferWriter<byte>`. Uses an internal `ISpanOwner` struct
+  interface with `MemoryStream<TSource>` generic class — the closest existing precedent
+  to the pattern explored here.
 - [**Nerdbank.Streams**](https://github.com/dotnet/Nerdbank.Streams): Provides
   `AsStream()` extensions for `ReadOnlySequence<byte>`, `IBufferWriter<byte>`,
-  `IDuplexPipe`, `PipeReader/PipeWriter`, `WebSocket`.
+  `IDuplexPipe`, `PipeReader/PipeWriter`, `WebSocket`. Uses standalone dedicated classes
+  per backing type.
 
-### Current Proposals
+### Current API Proposal Alternatives
 
 The [API proposal](https://github.com/dotnet/runtime/issues/82801) describes several
-alternatives, all following a **"one custom Stream subclass per backing type"** pattern:
+design alternatives, all following a **"one custom Stream subclass per backing type"**
+pattern:
 
 - `ReadOnlyTextStream` for `string` / `ReadOnlyMemory<char>`
 - `MemoryByteStream` (or ReadOnlyMemoryStream) for `Memory<byte>` / `ReadOnlyMemory<byte>`
@@ -38,6 +50,9 @@ alternatives, all following a **"one custom Stream subclass per backing type"** 
 
 These are exposed via factory methods (`Stream.FromText(...)`,
 `Stream.FromReadOnlyData(...)`, etc.) or extension methods (`sequence.AsStream()`).
+The proposal lists four alternative API shapes (static methods on Stream, extension
+methods on the types, a StreamFactory class, or moving ReadOnlySequence to CoreLib),
+but all share the same implementation architecture: separate dedicated Stream subclasses.
 
 ### This Exploration: IStreamable Alternative
 
@@ -46,11 +61,74 @@ that captures the core stream data-access contract, with **struct implementation
 each backing type, adapted to `Stream` via a **single generic class**
 `StreamableStream<TStreamable>`.
 
+### Points Considered in This Assessment
+
+The following dimensions were explicitly evaluated:
+
+1. **Performance** — Does the generic approach match, exceed, or fall behind dedicated
+   classes across all stream operations?
+2. **Allocation / instance size** — What is the memory footprint difference?
+3. **Code reuse** — How much duplicated code does the generic approach eliminate?
+4. **Extensibility** — Can the interface be meaningfully extended by new types?
+5. **Public API viability** — Can/should IStreamable be a public contract?
+6. **Text stream fit** — Does the pattern work for encoding-based streams?
+7. **Assembly layering** — How does the pattern interact with CoreLib / System.Memory boundaries?
+8. **DIM (Default Interface Methods)** — Why DIM was considered and why the struct+generic
+   approach was chosen instead.
+9. **Debuggability / developer experience** — Stack traces, type names, IntelliSense.
+10. **Mutable struct semantics** — Correctness risks from value-type position tracking.
+
 ## Methodology
 
-### 1. Interface Design
+The exploration followed a structured prototyping and benchmarking approach,
+progressing through five steps:
 
-The `IStreamable` interface defines the minimal contract for stream-like operations:
+### Step 1: Prior Art Analysis
+
+Before designing anything, the existing implementations were studied:
+
+**CommunityToolkit.HighPerformance** — The most relevant precedent. Its architecture:
+
+```
+ISpanOwner (internal interface)
+├── Span<byte> Span { get; }
+├── Memory<byte> Memory { get; }
+└── int Length { get; }
+
+Implementations (structs):
+├── ArrayOwner         — wraps byte[] with offset/count
+├── MemoryManagerOwner — wraps MemoryManager<byte>
+└── ...
+
+MemoryStream<TSource> : Stream where TSource : struct, ISpanOwner
+└── Contains all stream logic (Read/Write/Seek), delegates to TSource for data access
+```
+
+Source: [`ISpanOwner.cs`](https://github.com/CommunityToolkit/dotnet/blob/main/src/CommunityToolkit.HighPerformance/Streams/Sources/Interfaces/ISpanOwner.cs),
+[`MemoryStream{TSource}.cs`](https://github.com/CommunityToolkit/dotnet/blob/main/src/CommunityToolkit.HighPerformance/Streams/MemoryStream%7BTSource%7D.cs)
+
+Key observation: `ISpanOwner` is a **thin data-access interface** — it only provides
+`Span`, `Memory`, and `Length`. All stream semantics (position tracking, bounds checking,
+seek logic) live in `MemoryStream<TSource>`. This works for homogeneous byte-buffer types
+but cannot express types with fundamentally different read semantics (e.g., text encoding).
+
+**Nerdbank.Streams** — Uses dedicated classes per type:
+[`ReadOnlySequenceStream`](https://github.com/dotnet/Nerdbank.Streams/blob/main/src/Nerdbank.Streams/ReadOnlySequenceStream.cs)
+is a standalone sealed class with `SequencePosition`-based tracking. No generic
+specialization pattern.
+
+**Existing dotnet/runtime prototype** — The fork's `stream-refactor-investigation` branch
+has a
+[`ReadOnlyTextStream`](https://github.com/ViveliDuCh/runtime/blob/stream-refactor-investigation/src/libraries/System.Private.CoreLib/src/System/IO/ReadOnlyTextStream.cs)
+implementing on-the-fly encoding with `Encoder`, `byte[]` buffer, char position
+tracking, and resync logic for seekability — a complex stateful type.
+
+### Step 2: Interface Design
+
+The `IStreamable` interface was designed as a **richer contract** than CommunityToolkit's
+`ISpanOwner`, putting the stream logic (Read/Write/Seek) inside the struct itself rather
+than in the generic adapter. This gives each backing type full control over its
+implementation:
 
 ```csharp
 internal interface IStreamable
@@ -70,57 +148,134 @@ internal interface IStreamable
 }
 ```
 
-Key design decisions:
-- **Span-based**: Core read/write operations use `Span<byte>` / `ReadOnlySpan<byte>`,
-  the most efficient buffer types available.
-- **No async members**: Since all backing types are in-memory, async operations are
-  trivially synchronous. The adapter handles async wrapping.
-- **No dispose**: Lifetime management stays in the outer `StreamableStream<T>`.
+Key design decisions and their rationale:
 
-### 2. Struct Implementations
+| Decision | Rationale |
+|---|---|
+| **Span-based Read/Write** | `Span<byte>` / `ReadOnlySpan<byte>` are the most efficient buffer types; avoids the `byte[]` + offset + count pattern |
+| **No async members** | All backing types are in-memory — async operations are trivially synchronous. The `StreamableStream<T>` adapter wraps sync calls in `Task.FromResult` / `ValueTask`, identical to how `MemoryStream` handles async |
+| **No Dispose on the interface** | Lifetime management belongs to the outer `StreamableStream<T>`. The struct holds data references but doesn't own resources |
+| **ReadByte/WriteByte explicit** | These hot-path operations need per-type optimization (e.g., direct array indexing vs `Span` access), so they're interface members rather than default implementations |
+| **CopyTo on the interface** | Each backing type can implement an optimized bulk copy (e.g., single `Span.CopyTo` for contiguous memory, segment-by-segment for sequences) |
+| **Internal visibility** | Discussed in detail in the "Public API Viability" section below |
 
-Each backing type gets a lightweight struct wrapper:
+**Why not Default Interface Methods (DIM)?** DIM was explicitly considered and rejected
+for the following reasons:
+
+1. DIM methods dispatch through
+   [virtual stub dispatch (VSD)](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/virtual-stub-dispatch.md),
+   which is the slower interface dispatch path. VSD uses indirect stubs instead of
+   direct vtable lookups.
+2. The JIT cannot inline DIM calls through interface references. The whole performance
+   benefit of the struct+generic pattern comes from the JIT specializing
+   `StreamableStream<ConcreteStruct>`, enabling it to inline the struct's method
+   implementations directly. DIM would negate this.
+3. The JIT cannot devirtualize DIM calls on value types when called through the interface
+   type, as documented in
+   [CA1859](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1859).
+   Only when the value type is known at compile time through a generic constraint does
+   the JIT generate direct calls.
+
+Reference: [Performance of direct virtual call vs interface call in C#](https://stackoverflow.com/questions/7225205/performance-of-direct-virtual-call-vs-interface-call-in-c-sharp)
+
+### Step 3: Struct Implementations
+
+Two struct implementations were prototyped to cover the read-only and read-write cases:
 
 ```csharp
-internal struct ReadOnlyMemoryStreamable : IStreamable { ... }
-internal struct MemoryStreamable : IStreamable { ... }
-// Future: StringStreamable, ReadOnlySequenceStreamable, etc.
+// Read-only: wraps ReadOnlyMemory<byte>
+internal struct ReadOnlyMemoryStreamable : IStreamable
+{
+    private readonly ReadOnlyMemory<byte> _memory;  // 16 bytes (object ref + int + int)
+    private int _position;                           // 4 bytes
+    // Total struct size: ~24 bytes (with padding)
+}
+
+// Read-write: wraps Memory<byte>
+internal struct MemoryStreamable : IStreamable
+{
+    private readonly Memory<byte> _memory;   // 16 bytes
+    private int _position;                    // 4 bytes
+    private int _length;                      // 4 bytes
+    private readonly bool _writable;          // 1 byte + padding
+    // Total struct size: ~28 bytes (with padding)
+}
 ```
 
-### 3. Generic Stream Adapter
+Each struct is fully self-contained: it manages its own position, performs its own bounds
+checking, and provides its own `ReadByte`/`WriteByte`/`CopyTo` implementations.
 
-A single sealed class adapts any `IStreamable` struct to `Stream`:
+**Mutable struct concern**: The `_position` field is mutated on every read/write. This is
+safe when the struct is stored as a field in `StreamableStream<T>` (class field access
+does not copy), but would silently break if the struct were passed by value, stored in
+a readonly field, or boxed to the `IStreamable` interface type. This is a known hazard
+of mutable value types in .NET — see the discussion in Step 7 below.
+
+### Step 4: Generic Stream Adapter
+
+A single sealed class adapts any `IStreamable` struct to the `Stream` base class:
 
 ```csharp
 internal sealed class StreamableStream<TStreamable> : Stream
     where TStreamable : struct, IStreamable
 {
-    private TStreamable _streamable;  // JIT specializes per TStreamable
+    private TStreamable _streamable;  // embedded struct — JIT specializes per type
     private bool _disposed;
-    // ... delegates all Stream overrides to _streamable
+
+    // All Stream overrides follow the same pattern:
+    // 1. Validate arguments (using Stream.ValidateBufferArguments etc.)
+    // 2. Check disposed state
+    // 3. Delegate to _streamable.Method(...)
 }
 ```
 
-The `struct` constraint is critical: the JIT generates specialized machine code for each
-concrete `TStreamable` type, enabling inlining and eliminating the interface virtual
-dispatch overhead that would occur with a non-generic `IStreamable` field.
+**Why the `struct` constraint is critical**: When the CLR encounters
+`StreamableStream<ReadOnlyMemoryStreamable>`, the JIT generates machine code specialized
+for `ReadOnlyMemoryStreamable`. All calls to `_streamable.Read(...)`,
+`_streamable.ReadByte()`, etc. are resolved at JIT time to direct calls (no vtable
+lookup, no interface dispatch). The JIT can then inline these calls if they're small
+enough, producing code equivalent to what a hand-written dedicated class would generate.
 
-### 4. Benchmark Design
+This is the same mechanism that makes `List<int>` faster than `ArrayList` for value types
+— generic specialization avoids boxing and enables direct field access.
 
-Three implementations were compared across identical operations:
+**What this does NOT eliminate**: The outer `Stream` virtual dispatch. When a consumer
+calls `stream.Read(buffer)` through a `Stream` reference, the CLR still performs a vtable
+lookup to reach `StreamableStream<T>.Read`. This is unavoidable — any `Stream` subclass
+pays this cost. The optimization is on the **inner** dispatch: from `StreamableStream<T>`
+to the backing data source.
 
-| Implementation | Description |
-|---|---|
-| **MemoryStream** (baseline) | .NET's built-in `MemoryStream` with `byte[]` backing |
-| **DedicatedStream** | A standalone `Stream` subclass per backing type (current proposal pattern) |
-| **StreamableStream&lt;T&gt;** | Single generic adapter with IStreamable struct (this exploration) |
+### Step 5: Benchmark Design
 
-Operations benchmarked: `ReadByte`, `Read(Span<byte>)`, `WriteByte`, `Write(ReadOnlySpan<byte>)`, `CopyTo`, and allocation.
+Three implementations were compared under identical conditions:
 
-**Environment:**
-- BenchmarkDotNet v0.14.0, Windows, .NET 9.0
-- Buffer sizes: 100 bytes and 100,000 bytes
-- ShortRun job (3 iterations, 3 warmup)
+| Implementation | Description | Inner Dispatch |
+|---|---|---|
+| **MemoryStream** (baseline) | .NET's built-in `MemoryStream` with `byte[]` backing | Direct `byte[]` field access |
+| **DedicatedStream** | A standalone `Stream` subclass per backing type (mirrors current proposal) | Direct `ReadOnlyMemory<byte>` field access |
+| **StreamableStream&lt;T&gt;** | Generic adapter + IStreamable struct (this exploration) | JIT-specialized struct method call |
+
+**Operations benchmarked**: Each operation was chosen to stress a different aspect of
+the stream implementation:
+
+| Operation | What It Tests | Hot Path Relevance |
+|---|---|---|
+| `ReadByte` | Per-byte overhead; the tightest inner loop | High — used by `BinaryReader`, byte-at-a-time parsing |
+| `Read(Span<byte>)` | Bulk read with `Span` | High — the modern fast path for buffered I/O |
+| `WriteByte` | Per-byte write overhead | Moderate — less common than bulk writes |
+| `Write(ReadOnlySpan<byte>)` | Bulk write with `Span` | High — serialization, content generation |
+| `CopyTo` | Optimized bulk transfer | Moderate — one-shot copies to output streams |
+| Allocation | Constructor + instance size | Relevant for short-lived wrapper streams |
+
+**Parameters**: Buffer sizes of 100 bytes (small, allocation-dominated) and 100,000 bytes
+(large, throughput-dominated) were tested to capture both extremes.
+
+**Environment**:
+- BenchmarkDotNet v0.14.0
+- Windows 11, x64
+- .NET 9.0 runtime
+- ShortRun job: 3 warmup iterations, 3 measured iterations
+- `[MemoryDiagnoser]` enabled for allocation tracking (Gen0/Gen1/Gen2 + Allocated bytes)
 
 ## Benchmark Results
 
@@ -157,69 +312,109 @@ Operations benchmarked: `ReadByte`, `Read(Span<byte>)`, `WriteByte`, `Write(Read
 
 ## Analysis
 
-### Key Finding: Performance Parity Between Approaches
+### Point 1: Performance — Generic Specialization Achieves Parity
 
 **StreamableStream&lt;T&gt; and dedicated Stream subclasses are performance-equivalent.**
 Across all benchmarked operations, the two approaches show ratios between 0.91x and
-1.06x — well within measurement noise. The generic specialization successfully eliminates
-the inner dispatch overhead.
+1.06x — well within measurement noise for a ShortRun benchmark configuration.
+
+**Why this result is expected**: The JIT generates code for
+`StreamableStream<ReadOnlyMemoryStreamable>` that is structurally identical to what a
+hand-written `DedicatedReadOnlyMemoryStream` would produce. Both end up as:
+
+```
+Stream.Read(Span) override → ObjectDisposedException check → ReadOnlyMemory.Span access → Slice + CopyTo
+```
+
+The generic constraint `where TStreamable : struct, IStreamable` ensures that calls to
+`_streamable.Read(buffer)` are devirtualized at JIT time. No interface dispatch stub is
+generated. The compiler emits a direct call (or inlines it entirely for small methods).
 
 This confirms the pattern documented in CommunityToolkit.HighPerformance's
 [`MemoryStream<TSource>`](https://github.com/CommunityToolkit/dotnet/blob/main/src/CommunityToolkit.HighPerformance/Streams/MemoryStream%7BTSource%7D.cs),
 which uses the same `where TSource : struct, ISpanOwner` constraint for the same reason.
 
-### Why MemoryStream is Faster at Per-Byte Operations
+**Rationale implication**: Performance cannot be used to argue for or against the
+IStreamable approach. It is neutral. The decision must be based on other factors.
+
+### Point 2: Why MemoryStream is Faster at Per-Byte Operations
 
 Both Dedicated and Streamable implementations are ~2x slower than `MemoryStream` for
 `ReadByte`/`WriteByte`. This is **not** due to generic/interface overhead — it's because:
 
 1. **MemoryStream uses direct `byte[]` array access**: `_buffer[_position++]` compiles to
-   a simple array bounds check + load, which the JIT optimizes aggressively.
+   a simple array bounds check + load, which the JIT optimizes aggressively (the array
+   length is a direct field read, the bounds check is a single compare+branch).
 2. **Memory-backed implementations use `ReadOnlyMemory<byte>.Span`**: This accessor goes
    through `MemoryMarshal` indirection to obtain a `Span<byte>`, then indexes into it.
-   This extra indirection adds ~1-2ns per call, compounding in byte-at-a-time loops.
+   The indirection involves checking the `_object` field type and computing the span
+   start, adding ~1-2ns per call that compounds in byte-at-a-time loops.
 
 This is an inherent characteristic of `ReadOnlyMemory<byte>` vs `byte[]`, not of the
 generic approach. Any `ReadOnlyMemory<byte>`-backed stream — whether dedicated or
-generic — will exhibit this difference.
+generic — will exhibit this difference. The
+[PR #124990](https://github.com/dotnet/runtime/pull/124990) for MemoryStream Memory
+constructors addresses this by deferring the `_memoryData` null check past shared
+early-return checks, minimizing IL size impact on the byte-array fast path.
 
 For bulk operations (`Read(Span<byte>)`, `Write(ReadOnlySpan<byte>)`, `CopyTo`), this
-overhead is amortized and all three approaches converge to equivalent performance.
+overhead is amortized across the entire buffer and all three approaches converge to
+equivalent performance (~10ns for 100B, ~2000ns for 100KB).
 
-### Allocation Analysis
+### Point 3: Allocation Analysis
 
-StreamableStream&lt;T&gt; uses 56 bytes per instance vs 48 bytes for a dedicated class
-and 64 bytes for MemoryStream. The 8-byte difference vs dedicated is due to struct
-alignment padding. This is negligible for stream instances, which are typically long-lived
-relative to the data they process.
+| Implementation | Instance Size | Components |
+|---|---:|---|
+| MemoryStream | 64 B | Object header + vtable ptr + byte[] ref + many int fields (position, length, capacity, origin, etc.) + booleans |
+| DedicatedStream | 48 B | Object header + vtable ptr + ReadOnlyMemory&lt;byte&gt; (16B) + int _position + bool _disposed |
+| StreamableStream&lt;T&gt; | 56 B | Object header + vtable ptr + TStreamable struct (ReadOnlyMemory + int = ~20B) + bool _disposed + padding |
 
-## IStreamable as a Public Interface: Feasibility Assessment
+The 8-byte difference between StreamableStream (56B) and Dedicated (48B) is due to
+struct alignment padding — the embedded `TStreamable` struct must be aligned to its
+largest member's alignment requirement.
+
+**Rationale implication**: The allocation difference is negligible. Stream instances are
+typically long-lived relative to the data they process. Even under high-frequency
+allocation (thousands of short-lived wrapper streams per second), the 8-byte difference
+would not be observable in practice.
+
+## Point 4: IStreamable as a Public Interface — Feasibility Assessment
 
 ### Could IStreamable be Exposed Publicly?
 
 The interface could theoretically be made public, enabling third-party types to provide
 stream-like behavior through a standardized contract. However, several significant
-barriers exist:
+barriers exist, each examined below:
 
-#### 1. Mutable Struct Semantics
+#### 4a. Mutable Struct Semantics
 
 The IStreamable struct implementations are **mutable** (they update `_position` during
 reads). When stored as a field in `StreamableStream<T>`, mutations are correctly
 reflected because field access on a class does not copy the struct. However:
 
-- **Passing by value copies the struct**, losing position state.
+- **Passing by value copies the struct**, losing position state:
+  ```csharp
+  ReadOnlyMemoryStreamable s = new(data);
+  s.Read(buffer);  // s._position is now 10
+  DoSomething(s);  // passes a COPY — DoSomething sees position=10 but its reads don't affect s
+  ```
 - **Readonly fields/locals prevent mutation**, causing compile errors or silent bugs.
-- **Interface boxing** (casting `IStreamable` to the interface type) copies the struct,
-  breaking statefulness.
+- **Interface boxing** (casting to `IStreamable`) copies the struct, breaking
+  statefulness:
+  ```csharp
+  IStreamable boxed = new ReadOnlyMemoryStreamable(data);  // boxed copy
+  boxed.Read(buffer);  // reads from the boxed copy — position state is on the heap
+  // The original struct (if any) is unchanged
+  ```
 
 This is well-documented in the .NET design guidelines and is the reason
 [CA1859](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1859)
 recommends concrete types over interfaces for value types.
 
 The CommunityToolkit works around this by keeping `ISpanOwner` as a **private internal
-contract** — it's never exposed to consumers.
+contract** — it's never exposed to consumers. This is the correct approach.
 
-#### 2. Stream is the Consumer Contract
+#### 4b. Stream is the Consumer Contract
 
 The .NET ecosystem's consumer contract for I/O is `Stream`. APIs accept `Stream`
 parameters, not `IStreamable`. Making `IStreamable` public wouldn't change how consumers
@@ -227,34 +422,61 @@ interact with streams — they'd still receive a `Stream` object. The interface 
 the **provider** side (how backing types implement the data-access logic).
 
 There is no practical benefit to exposing `IStreamable` publicly because:
-- Consumers can't use it directly (they need `Stream`).
-- Providers can implement `Stream` directly (as dedicated classes do).
-- The generic specialization benefit only materializes when `TStreamable` is a compile-time
-  known struct, which requires the generic `StreamableStream<TStreamable>` class — an
-  implementation detail.
+- **Consumers can't use it directly** — they need `Stream` for `XmlSerializer`,
+  `HttpContent`, `BinaryReader`, `CopyToAsync`, etc.
+- **Providers can implement `Stream` directly** — as dedicated classes do, without any
+  new abstraction.
+- **The generic specialization benefit only materializes** when `TStreamable` is a
+  compile-time known struct, which requires `StreamableStream<TStreamable>` — an
+  implementation detail that cannot be hidden behind a non-generic factory method.
 
-#### 3. .NET Runtime Type System Constraints
+To clarify: `Stream.FromReadOnlyData(ReadOnlyMemory<byte> data)` would internally return
+`new StreamableStream<ReadOnlyMemoryStreamable>(new ReadOnlyMemoryStreamable(data))`.
+The consumer sees `Stream`, not `IStreamable` or `StreamableStream<T>`. The interface
+is purely internal plumbing.
 
-- **`string`** cannot implement interfaces retroactively.
-- **`ReadOnlyMemory<T>`** is a `readonly struct` that cannot be modified to implement new
-  interfaces without changing CoreLib.
-- **`ReadOnlySequence<T>`** lives in `System.Memory.dll`, adding layering complexity.
+#### 4c. .NET Runtime Type System Constraints
 
-For these types, the IStreamable pattern requires **wrapper structs** (e.g.,
-`ReadOnlyMemoryStreamable`), adding another layer of indirection in the API surface.
+- **`string`** cannot implement interfaces retroactively. `string : IStreamable` would
+  require modifying `System.String` in CoreLib — a non-starter.
+- **`ReadOnlyMemory<T>`** is a `readonly struct` that cannot be modified to implement
+  new interfaces without changing CoreLib, and its readonly-ness conflicts with the
+  mutable `_position` requirement of stream semantics.
+- **`ReadOnlySequence<T>`** lives in `System.Memory.dll`, adding layering complexity
+  (see Point 8 below).
 
-#### 4. Default Interface Methods (DIM) Overhead
+For all these types, the IStreamable pattern requires **wrapper structs** (e.g.,
+`ReadOnlyMemoryStreamable` wrapping `ReadOnlyMemory<byte>`), adding a layer of
+indirection that provides no API surface benefit to the end user.
 
-If DIM were used to provide shared logic in the interface, the performance benefit would
-be lost. DIM methods use
-[virtual stub dispatch](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/virtual-stub-dispatch.md),
-which is the slower interface dispatch path (vs vtable dispatch for class virtual methods).
-The whole point of the struct+generic pattern is to **avoid** this dispatch by letting the
-JIT specialize.
+#### 4d. Default Interface Methods (DIM) Overhead
 
-Reference: [Performance of direct virtual call vs interface call in C#](https://stackoverflow.com/questions/7225205/performance-of-direct-virtual-call-vs-interface-call-in-c-sharp)
+If DIM were used to provide shared logic in the interface (e.g., default `ReadByte`
+implementation calling `Read` with a 1-byte span), the performance benefit would be lost:
 
-### Verdict: Internal Contract Only
+1. DIM methods use
+   [virtual stub dispatch (VSD)](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/virtual-stub-dispatch.md).
+   VSD is currently used **only** for interface dispatch, not for virtual instance
+   methods on classes. As documented in the VSD design doc: *"virtual instance method
+   calls suffer an unacceptable speed degradation"* — VSD was disabled for class virtual
+   methods for this reason, but interface dispatch still uses it.
+
+2. When calling a DIM through a generic constraint, the JIT can potentially
+   devirtualize, but this is not guaranteed for all DIM patterns. The struct+abstract
+   interface member pattern (where each struct provides its own implementation) is
+   reliably devirtualized.
+
+3. Reference: [Andrew Lock: Using DIM for performance in IHeaderDictionary](https://andrewlock.net/using-default-interface-methods-for-performance-gains-in-iheaderdictionary/)
+   documents a case where DIM was used successfully in ASP.NET Core, but notably in that
+   case the DIM provided **higher-level** default behavior that delegated to
+   **lower-level** members that each type overrides — not the other way around.
+
+**Rationale**: DIM is useful for evolving interfaces and providing opt-in higher-level
+methods. It is not suitable as the primary dispatch mechanism for hot-path stream
+operations. The struct+generic approach achieves the same code sharing goal without
+the dispatch overhead.
+
+### Point 4 Verdict: Internal Contract Only
 
 IStreamable should remain an **internal implementation detail**, not a public API surface.
 This mirrors the pattern used by:
@@ -262,10 +484,10 @@ This mirrors the pattern used by:
   [`ISpanOwner`](https://github.com/CommunityToolkit/dotnet/blob/main/src/CommunityToolkit.HighPerformance/Streams/Sources/Interfaces/ISpanOwner.cs)
   — internal interface.
 - .NET runtime itself: Many internal interfaces/structs exist for generic specialization
-  (e.g., `ISpanFormattable` implementations in formatting code) without being publicly
-  exposed as the primary API.
+  (e.g., `ISpanFormattable` implementations in formatting code, `TArg` patterns in
+  string formatting) without being publicly exposed as the primary API.
 
-## Comparison with Existing Approaches
+## Point 5: Comparison with Existing Approaches
 
 ### CommunityToolkit.HighPerformance
 
@@ -279,47 +501,73 @@ ISpanOwner (interface)          ≈  IStreamable (this exploration)
 MemoryStream<TSource> (class)   ≈  StreamableStream<TStreamable>
 ```
 
-Key differences:
-- **ISpanOwner** only exposes `Span`, `Memory`, and `Length` — the stream logic
-  (Read/Write/Seek) lives in `MemoryStream<TSource>`.
-- **IStreamable** puts the stream logic in the struct itself, giving each backing type
-  full control over its read/write implementation.
+Key differences in design philosophy:
 
-The IStreamable approach is more flexible for types with fundamentally different
-read semantics (e.g., `ReadOnlyTextStream` needs on-the-fly encoding, which can't be
-expressed as just `Span` + `Length`).
+| Aspect | CommunityToolkit `ISpanOwner` | This Exploration `IStreamable` |
+|---|---|---|
+| **Interface scope** | Thin data accessor: `Span`, `Memory`, `Length` | Full stream contract: Read, Write, Seek, CopyTo |
+| **Stream logic location** | In the generic class (`MemoryStream<TSource>`) | In the struct (each struct controls its own logic) |
+| **Heterogeneous types** | Cannot express types with different read semantics | Can express encoding, multi-segment, etc. |
+| **Code sharing** | More shared code (all logic in one generic class) | Less shared code (each struct has its own logic) |
+
+The IStreamable approach is more flexible because `ReadOnlyTextStream` needs on-the-fly
+encoding with `Encoder`, `byte[]` buffer, and char position tracking — this cannot be
+expressed as just `Span` + `Length`. However, this flexibility comes at the cost of more
+code per struct implementation.
 
 ### Nerdbank.Streams
 
 Nerdbank.Streams uses the traditional one-class-per-type pattern:
 [`ReadOnlySequenceStream`](https://github.com/dotnet/Nerdbank.Streams/blob/main/src/Nerdbank.Streams/ReadOnlySequenceStream.cs)
-is a standalone sealed class. No generic specialization or shared interface.
+is a standalone sealed class. It also provides additional features not present in the
+IStreamable prototype:
+- `disposeAction` callback for buffer recycling
+- Cached `Task<int>` reuse for repeated reads of the same byte count
+- `SequencePosition`-based seeking (preserves multi-segment structure)
 
-## Extensibility Analysis
+These features are type-specific optimizations that wouldn't naturally fit into a generic
+`IStreamable` interface — they demonstrate the value of dedicated implementations.
 
-### Types from the API Proposal
+## Point 6: Extensibility Analysis
 
-| Source Type | IStreamable Struct | Feasibility |
-|---|---|---|
-| `ReadOnlyMemory<byte>` | `ReadOnlyMemoryStreamable` | ✅ Straightforward |
-| `Memory<byte>` | `MemoryStreamable` | ✅ Straightforward |
-| `string` | `StringStreamable` | ⚠️ Requires on-the-fly encoding; struct would hold encoder state |
-| `ReadOnlyMemory<char>` | `ReadOnlyMemoryCharStreamable` | ⚠️ Same encoding complexity as string |
-| `ReadOnlySequence<byte>` | `ReadOnlySequenceStreamable` | ⚠️ Layering: lives in System.Memory.dll |
+### Coverage of Types from the API Proposal
 
-### Limitation: Text Streams
+| Source Type | IStreamable Struct | Feasibility | Notes |
+|---|---|---|---|
+| `ReadOnlyMemory<byte>` | `ReadOnlyMemoryStreamable` | ✅ Straightforward | Prototyped and benchmarked |
+| `Memory<byte>` | `MemoryStreamable` | ✅ Straightforward | Prototyped and benchmarked |
+| `string` | `StringStreamable` | ⚠️ Complex | Requires Encoder, byte[] buffer, resync logic |
+| `ReadOnlyMemory<char>` | `ReadOnlyMemoryCharStreamable` | ⚠️ Complex | Same encoding complexity as string |
+| `ReadOnlySequence<byte>` | `ReadOnlySequenceStreamable` | ⚠️ Layering | Lives in System.Memory.dll |
 
-The `ReadOnlyTextStream` (for `string` / `ReadOnlyMemory<char>`) requires an `Encoder`,
-a `byte[]` buffer, and resync logic for seekability. Fitting this into a struct that
-implements `IStreamable` is feasible but results in a large struct (>64 bytes) with
-reference-type fields, reducing the benefits of value-type semantics.
+### Point 6a: Text Streams Don't Fit the Pattern
 
-This is a significant practical limitation: the IStreamable pattern works best for
-**simple in-memory byte buffers** where the struct holds just a memory reference and
-a position integer. For types requiring encoding pipelines, the "one dedicated Stream
-class" approach is cleaner.
+The `ReadOnlyTextStream` (for `string` / `ReadOnlyMemory<char>`) requires:
 
-### Limitation: ReadOnlySequence Layering
+- An `Encoder` instance (reference type, stateful)
+- A `byte[]` encoding buffer (reference type, 4KB default)
+- A `_charPosition` integer for tracking encoder progress
+- A `_byteBufferPosition` / `_byteBufferCount` for the encoding window
+- A `_needsResync` flag for seek-then-read correctness
+- A `_cachedLength` nullable for lazy byte-count computation
+
+Fitting this into an `IStreamable` struct produces a struct with:
+- 2+ reference-type fields (Encoder, byte[])
+- 6+ value-type fields (positions, counts, flags)
+- Total size: >64 bytes
+
+This negates the value-type benefits:
+- Large structs are expensive to copy (function calls, assignments).
+- Reference-type fields in structs don't benefit from stack allocation.
+- The JIT may not inline methods on large structs.
+- The struct becomes too large to fit in registers.
+
+The existing
+[`ReadOnlyTextStream`](https://github.com/ViveliDuCh/runtime/blob/stream-refactor-investigation/src/libraries/System.Private.CoreLib/src/System/IO/ReadOnlyTextStream.cs)
+prototype is implemented as a dedicated sealed class precisely because of this complexity.
+Forcing it into the IStreamable mold would add indirection without benefit.
+
+### Point 6b: ReadOnlySequence Layering
 
 `ReadOnlySequence<byte>` lives in `System.Memory.dll`, while `IStreamable` and
 `StreamableStream<T>` would need to be in `System.Private.CoreLib` (where `Stream` lives).
@@ -327,76 +575,155 @@ A `ReadOnlySequenceStreamable` struct would need to be in `System.Memory.dll`, a
 generic specialization of `StreamableStream<ReadOnlySequenceStreamable>` would need to
 cross assembly boundaries.
 
-This is solvable (the JIT handles cross-assembly generic specialization), but adds
-complexity to the layering story without providing a clear benefit over the current
-proposal's extension method approach.
+This is technically solvable — the JIT handles cross-assembly generic instantiation —
+but adds complexity to the layering story. The current proposal addresses this with
+either a C#14 static extension on `Stream` or a classic extension method on
+`ReadOnlySequence<byte>`, both of which are simpler and already under review.
 
-## Trade-offs Summary
+## Point 7: Code Reuse Assessment
 
-| Dimension | Dedicated Classes | IStreamable + Generic |
-|---|---|---|
-| **Performance** | Baseline | **Equivalent** (benchmarked) |
-| **Code reuse** | Duplicated validation/async logic | Shared in StreamableStream&lt;T&gt; |
-| **Extensibility** | New Stream subclass per type | New struct per type |
-| **Complexity** | Simple inheritance | Generic specialization pattern |
-| **Text streams** | ✅ Natural fit | ⚠️ Large struct, reduced benefit |
-| **Public API surface** | Factory methods on Stream | Same (IStreamable stays internal) |
-| **Instance size** | 48 B | 56 B (+8 B padding) |
-| **Debuggability** | Direct class, clear stack traces | Generic type names in debugger |
+The main concrete advantage of the IStreamable approach is code reuse. Here's what's
+shared vs duplicated in each approach:
 
-## Limitations Encountered
+### Shared in StreamableStream&lt;T&gt; (not duplicated per type):
 
-1. **Struct mutation semantics**: Mutable structs implementing `IStreamable` require
-   careful handling. The struct must be stored as a **field** (not a local, not boxed)
-   to preserve position state across method calls.
+| Logic | Lines Saved Per Type |
+|---|---:|
+| `ObjectDisposedException.ThrowIf` checks | ~20 |
+| `ValidateBufferArguments` calls | ~10 |
+| `CancellationToken` handling in async methods | ~30 |
+| `Task.FromResult` / `ValueTask` wrapping | ~20 |
+| `Dispose` / `DisposeAsync` | ~10 |
+| `Flush` / `FlushAsync` (no-ops) | ~5 |
+| **Total per additional backing type** | **~95** |
+
+For 5 backing types, this saves ~380 lines of boilerplate. However, this boilerplate is
+straightforward, well-understood code that is easy to write correctly and easy to review.
+The complexity cost of the generic pattern (understanding struct mutation semantics,
+generic specialization, the two-level dispatch architecture) may exceed the benefit of
+saving ~95 lines per type.
+
+### Dedicated approach duplication is manageable:
+
+Each dedicated `Stream` subclass is ~120-150 lines. For 5 types, that's ~600-750 lines
+total. With the IStreamable approach, it's ~5 structs of ~60 lines + ~150 lines for
+`StreamableStream<T>` = ~450 lines. The net savings is ~150-300 lines across the entire
+feature.
+
+## Point 8: Trade-offs Summary
+
+| # | Dimension | Dedicated Classes | IStreamable + Generic | Winner |
+|---|---|---|---|---|
+| 1 | **Performance** | Baseline | **Equivalent** (0.91-1.06x, benchmarked) | Tie |
+| 2 | **Allocation** | 48 B per instance | 56 B per instance (+17%) | Dedicated (marginal) |
+| 3 | **Code reuse** | ~95 lines duplicated per type | Shared in StreamableStream&lt;T&gt; | IStreamable |
+| 4 | **Extensibility** | New Stream subclass per type | New struct per type | Tie |
+| 5 | **Complexity** | Simple inheritance | Generic specialization + struct mutation | Dedicated |
+| 6 | **Text streams** | ✅ Natural fit | ⚠️ Large struct, reduced benefit | Dedicated |
+| 7 | **ReadOnlySequence** | Extension method (current proposal) | Cross-assembly generic instantiation | Dedicated |
+| 8 | **Public API surface** | Factory methods on Stream | Same (IStreamable stays internal) | Tie |
+| 9 | **Debuggability** | Direct class names in stack traces | `StreamableStream<ReadOnlyMemoryStreamable>` in stack traces | Dedicated |
+| 10 | **Reviewability** | Each class self-contained, easy to review | Requires understanding generic specialization pattern | Dedicated |
+
+**Score**: Dedicated wins 5 dimensions, IStreamable wins 1, and 4 are ties.
+
+## Point 9: Limitations Encountered
+
+1. **Struct mutation semantics** (correctness risk): Mutable structs implementing
+   `IStreamable` require careful handling. The struct must be stored as a **field** (not a
+   local, not boxed) to preserve position state across method calls. This is a footgun
+   for any future developer modifying the code — incorrectly passing the struct by value
+   or storing it in a readonly field would introduce silent bugs. Dedicated classes
+   eliminate this entire class of bugs.
 
 2. **No zero-cost outer dispatch**: While the inner dispatch (IStreamable → concrete
    struct) is eliminated by generic specialization, the outer dispatch (caller →
    StreamableStream → Stream) still goes through virtual method tables. This is
-   unavoidable for any Stream subclass.
+   unavoidable for any Stream subclass. It means the IStreamable pattern cannot provide
+   a performance advantage over dedicated classes — only parity.
 
 3. **Text encoding doesn't fit the pattern well**: `ReadOnlyTextStream` needs
    stateful encoding (Encoder, byte buffer, char position tracking), producing a
-   struct >64 bytes with reference-type fields. This negates the value-type advantages.
+   struct >64 bytes with reference-type fields. This negates the value-type advantages
+   (no stack allocation benefit, expensive copies, JIT may not inline). For 2 of the
+   5 target types (string, ReadOnlyMemory&lt;char&gt;), the IStreamable pattern provides
+   no benefit.
 
 4. **Not publicly extensible in practice**: While the interface is technically
    implementable by external code, the struct + generic constraint pattern means
    consumers would need to instantiate `StreamableStream<TheirStruct>` explicitly,
-   which is awkward vs the proposed factory method pattern.
+   which is awkward vs the proposed factory method pattern. And since `Stream` remains
+   the consumer contract, there's no scenario where a consumer would benefit from
+   knowing about `IStreamable`.
 
 5. **Allocation overhead**: 56 bytes vs 48 bytes (dedicated) per instance due to struct
-   alignment padding in the generic class. Negligible in isolation, but measurable
-   under high-frequency allocation patterns.
+   alignment padding in the generic class. Marginal in isolation, but the dedicated
+   approach is strictly better on this dimension.
+
+6. **Debuggability**: Stack traces show `StreamableStream<ReadOnlyMemoryStreamable>.Read`
+   instead of `ReadOnlyMemoryStream.Read`. While not a blocking issue, it adds cognitive
+   load when debugging. Exception messages referencing the generic type are also less
+   readable.
+
+7. **JIT code size**: The JIT generates separate code for each `StreamableStream<T>`
+   instantiation. With 5 backing types, this means 5 copies of the adapter's validation
+   and async wrapping logic in the JIT output. Dedicated classes share no code at the
+   machine code level either (each class gets its own vtable entries), so this is roughly
+   equivalent, but worth noting that the generic approach does not save JIT compilation
+   time or code size.
 
 ## Conclusion
 
-### The IStreamable generic pattern achieves performance parity with dedicated Stream subclasses
+### Finding 1: Generic Specialization Achieves Performance Parity
 
 The benchmarks definitively show that `StreamableStream<TStreamable>` and dedicated
-`Stream` subclasses produce **equivalent performance** across all measured operations.
-The JIT's generic specialization for struct type parameters successfully eliminates
-interface dispatch overhead, confirming the pattern used by CommunityToolkit.HighPerformance.
+`Stream` subclasses produce **equivalent performance** across all measured operations
+(0.91x to 1.06x ratio range). The JIT's generic specialization for struct type parameters
+successfully eliminates interface dispatch overhead, confirming the pattern used by
+CommunityToolkit.HighPerformance.
 
-### However, the pattern does not provide sufficient benefits to justify the complexity
+**Evidence**: All 10 benchmark data points in the results section.
+**Implication**: Performance is not a differentiating factor between the approaches.
 
-For the specific use case of the API proposal (wrapping `Memory<byte>`,
+### Finding 2: The Pattern Has Significant Practical Limitations
+
+For the specific use case being addressed (wrapping `Memory<byte>`,
 `ReadOnlyMemory<byte>`, `string`, `ReadOnlyMemory<char>`, `ReadOnlySequence<byte>`
 as streams):
 
 1. **Performance is equivalent, not better.** The generic approach doesn't outperform
-   dedicated classes — it matches them. The simpler approach achieves the same result.
+   dedicated classes — it matches them. When two approaches have equal performance, the
+   simpler one should be preferred (per the general engineering principle of choosing
+   the simplest correct solution).
 
-2. **Text streams don't fit.** The encoding pipeline required for `string` /
+2. **Text streams don't fit the pattern.** The encoding pipeline required for `string` /
    `ReadOnlyMemory<char>` → `Stream` conversion produces structs too large and complex
-   to benefit from value-type semantics.
+   to benefit from value-type semantics. This means 2 of the 5 target types would still
+   need dedicated classes, creating a hybrid architecture that's harder to understand
+   than a uniform dedicated-class approach.
 
-3. **Extensibility is theoretical.** The IStreamable interface cannot be practically
-   exposed as a public API due to mutable struct semantics and the requirement that
-   `Stream` remain the consumer-facing contract.
+3. **Extensibility is theoretical, not practical.** The IStreamable interface cannot be
+   meaningfully exposed as a public API due to:
+   - Mutable struct semantics creating correctness hazards (Point 4a)
+   - `Stream` being the established consumer contract (Point 4b)
+   - Existing types (string, ReadOnlyMemory) not being retroactively extensible (Point 4c)
+   - DIM overhead making shared default implementations slower (Point 4d)
 
-4. **Code sharing is the main advantage**, and it's modest: validation logic and
-   async wrappers are shared in `StreamableStream<T>` instead of duplicated across
-   dedicated classes. This saves ~100 lines per additional backing type.
+4. **Code sharing is the main advantage, and it's modest.** The IStreamable approach
+   saves ~95 lines of boilerplate per additional backing type (~150-300 lines total across
+   the feature). This is real but modest, and the boilerplate being saved is
+   straightforward validation/async-wrapping code that is easy to write correctly.
+
+5. **The complexity cost outweighs the code savings.** Understanding the IStreamable
+   architecture requires knowledge of:
+   - Generic specialization and JIT behavior
+   - Mutable struct semantics and their pitfalls
+   - The two-level dispatch architecture (outer virtual + inner specialized)
+   - Why the struct must be a field, not a local or readonly
+
+   This complexity burden applies to every future developer who reads, modifies, or
+   reviews the code. For a feature with 5 backing types (a small, fixed set), this
+   overhead is not justified by the modest code savings.
 
 ### Recommendation
 
@@ -404,17 +731,33 @@ The **dedicated Stream subclass approach** (current proposal) is the right desig
 the .NET runtime:
 
 - **Simpler** — no generic type parameters, no struct mutation semantics to reason about.
-- **Equally performant** — as the benchmarks confirm.
-- **Better fit** for the full type range — especially text streams with encoding.
+  Each class is self-contained and independently understandable.
+- **Equally performant** — as the benchmarks confirm across all operations.
+- **Better fit for the full type range** — especially text streams with encoding, which
+  need dedicated classes regardless.
 - **Cleaner public API** — factory methods on `Stream` that return `Stream`, hiding all
-  implementation details.
+  implementation details. The consumer never needs to know about the backing implementation.
+- **More debuggable** — stack traces show descriptive class names like
+  `ReadOnlyMemoryStream.Read` rather than `StreamableStream<ReadOnlyMemoryStreamable>.Read`.
 
-The IStreamable pattern is valuable in **library contexts** (like CommunityToolkit) where
-it enables shipping a single generic implementation that covers multiple backing types
-without code duplication. For the .NET runtime itself, where the number of backing types
-is fixed and small (5 types), and where the implementations need type-specific
-optimizations (especially for text encoding), individual dedicated classes provide a
-better engineering trade-off.
+### Where IStreamable Makes Sense
+
+The IStreamable pattern **is** valuable in specific contexts:
+
+- **Library code** (like CommunityToolkit) where a single generic implementation covers
+  multiple backing types, reducing package size and maintenance burden. CommunityToolkit
+  serves a different audience — multi-TFM NuGet package consumers — where shipping fewer
+  compiled types matters.
+- **High extensibility requirements** where new backing types are frequently added by
+  different teams/contributors and code duplication becomes a real maintenance problem.
+- **Cases where all backing types are homogeneous** (all provide `Span` + `Length` with
+  identical read/write semantics), making the interface thin and the struct implementations
+  trivial.
+
+For the .NET runtime's stream wrapper feature, where the number of backing types is fixed
+at 5, where 2 of those types require complex encoding logic, and where the implementations
+need type-specific optimizations, individual dedicated classes provide the better
+engineering trade-off.
 
 ## References
 
