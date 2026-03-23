@@ -249,6 +249,7 @@ namespace System.Runtime.InteropServices
         /// <remarks>The returned span does not include the null terminator.</remarks>
         /// <exception cref="ArgumentException">The string is longer than <see cref="int.MaxValue"/>.</exception>
         [CLSCompliant(false)]
+        [RequiresUnsafe]
         public static unsafe ReadOnlySpan<char> CreateReadOnlySpanFromNullTerminated(char* value) =>
             value != null ? new ReadOnlySpan<char>(value, string.wcslen(value)) :
             default;
@@ -259,6 +260,7 @@ namespace System.Runtime.InteropServices
         /// <remarks>The returned span does not include the null terminator, nor does it validate the well-formedness of the UTF-8 data.</remarks>
         /// <exception cref="ArgumentException">The string is longer than <see cref="int.MaxValue"/>.</exception>
         [CLSCompliant(false)]
+        [RequiresUnsafe]
         public static unsafe ReadOnlySpan<byte> CreateReadOnlySpanFromNullTerminated(byte* value) =>
             value != null ? new ReadOnlySpan<byte>(value, string.strlen(value)) :
             default;
@@ -383,7 +385,7 @@ namespace System.Runtime.InteropServices
             // If the memory is empty, just return an empty array as the enumerable.
             if (length is 0 || obj is null)
             {
-                return Array.Empty<T>();
+                return [];
             }
 
             // If the object is a string, we can optimize. If it isn't a slice, just return the string as the
@@ -546,6 +548,7 @@ namespace System.Runtime.InteropServices
         /// Supported only for platforms that support misaligned memory access or when the memory block is aligned by other means.
         /// </remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        [OverloadResolutionPriority(1)] // Prioritize this overload over the ReadOnlySpan overload so types convertible to both resolve to this mutable version.
         public static unsafe ref T AsRef<T>(Span<byte> span)
             where T : struct
         {
