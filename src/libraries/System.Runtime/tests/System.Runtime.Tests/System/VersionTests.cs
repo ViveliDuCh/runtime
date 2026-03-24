@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using Xunit;
 
@@ -502,5 +503,148 @@ namespace System.Tests
                 AssertExtensions.Throws<ArgumentException>("fieldCount", () => version.TryFormat(dest, maxFieldCount + 1, out bytesWritten)); // Index > version.fieldCount
             }
         }
+
+        [Theory]
+        [MemberData(nameof(Parse_Valid_TestData))]
+        public static void IParsable_Parse_ValidInput_ReturnsExpected(string input, Version expected)
+        {
+            Assert.Equal(expected, Parse<Version>(input, null));
+            Assert.Equal(expected, Parse<Version>(input, CultureInfo.InvariantCulture));
+        }
+
+        [Theory]
+        [MemberData(nameof(Parse_Valid_TestData))]
+        public static void ISpanParsable_Parse_ValidInput_ReturnsExpected(string input, Version expected)
+        {
+            Assert.Equal(expected, ParseSpan<Version>(input.AsSpan(), null));
+            Assert.Equal(expected, ParseSpan<Version>(input.AsSpan(), CultureInfo.InvariantCulture));
+        }
+
+        [Fact]
+        public static void IParsable_Parse_InvalidInput_ThrowsFormatException()
+        {
+            Assert.Throws<FormatException>(() => Parse<Version>("", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("1", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("1,2,3,4", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("1.2.3.4.5", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("-1.2.3.4", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("b.2.3.4", null));
+            Assert.Throws<FormatException>(() => Parse<Version>("2147483648.2.3.4", null));
+        }
+
+        [Fact]
+        public static void ISpanParsable_Parse_InvalidInput_ThrowsFormatException()
+        {
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("1".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("1,2,3,4".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("1.2.3.4.5".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("-1.2.3.4".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("b.2.3.4".AsSpan(), null));
+            Assert.Throws<FormatException>(() => ParseSpan<Version>("2147483648.2.3.4".AsSpan(), null));
+        }
+
+        [Theory]
+        [MemberData(nameof(Parse_Valid_TestData))]
+        public static void IParsable_TryParse_ValidInput_ReturnsTrue(string input, Version expected)
+        {
+            Assert.True(TryParse<Version>(input, null, out Version? result));
+            Assert.Equal(expected, result);
+        }
+
+        [Theory]
+        [MemberData(nameof(Parse_Valid_TestData))]
+        public static void ISpanParsable_TryParse_ValidInput_ReturnsTrue(string input, Version expected)
+        {
+            Assert.True(TryParseSpan<Version>(input.AsSpan(), null, out Version? result));
+            Assert.Equal(expected, result);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("1")]
+        [InlineData("1,2,3,4")]
+        [InlineData("1.2.3.4.5")]
+        [InlineData("-1.2.3.4")]
+        [InlineData("b.2.3.4")]
+        [InlineData("2147483648.2.3.4")]
+        public static void IParsable_TryParse_InvalidInput_ReturnsFalse(string input)
+        {
+            Assert.False(TryParse<Version>(input, null, out Version? result));
+            Assert.Null(result);
+        }
+
+        [Fact]
+        public static void IParsable_TryParse_NullInput_ReturnsFalse()
+        {
+            Assert.False(TryParse<Version>(null, null, out Version? result));
+            Assert.Null(result);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("1")]
+        [InlineData("1,2,3,4")]
+        [InlineData("1.2.3.4.5")]
+        [InlineData("-1.2.3.4")]
+        [InlineData("b.2.3.4")]
+        [InlineData("2147483648.2.3.4")]
+        public static void ISpanParsable_TryParse_InvalidInput_ReturnsFalse(string input)
+        {
+            Assert.False(TryParseSpan<Version>(input.AsSpan(), null, out Version? result));
+            Assert.Null(result);
+        }
+
+        [Fact]
+        public static void IParsable_FormatProviderIsIgnored()
+        {
+            CultureInfo[] providers = [CultureInfo.InvariantCulture, CultureInfo.GetCultureInfo("de-DE"), CultureInfo.GetCultureInfo("ja-JP"), null!];
+            foreach (CultureInfo? provider in providers)
+            {
+                Assert.Equal(new Version(1, 2, 3, 4), Parse<Version>("1.2.3.4", provider));
+                Assert.True(TryParse<Version>("1.2.3.4", provider, out Version? result));
+                Assert.Equal(new Version(1, 2, 3, 4), result);
+            }
+        }
+
+        [Fact]
+        public static void ISpanParsable_FormatProviderIsIgnored()
+        {
+            CultureInfo[] providers = [CultureInfo.InvariantCulture, CultureInfo.GetCultureInfo("de-DE"), CultureInfo.GetCultureInfo("ja-JP"), null!];
+            foreach (CultureInfo? provider in providers)
+            {
+                Assert.Equal(new Version(1, 2, 3, 4), ParseSpan<Version>("1.2.3.4".AsSpan(), provider));
+                Assert.True(TryParseSpan<Version>("1.2.3.4".AsSpan(), provider, out Version? result));
+                Assert.Equal(new Version(1, 2, 3, 4), result);
+            }
+        }
+
+        [Fact]
+        public static void Version_CanBeUsedInGenericConstraint_ISpanParsable()
+        {
+            static T RoundTrip<T>(T value) where T : ISpanParsable<T>, ISpanFormattable
+            {
+                Span<char> buffer = stackalloc char[64];
+                value.TryFormat(buffer, out int charsWritten, default, null);
+                return T.Parse(buffer.Slice(0, charsWritten), null);
+            }
+
+            Version original = new Version(10, 20, 30, 40);
+            Version roundTripped = RoundTrip(original);
+            Assert.Equal(original, roundTripped);
+        }
+
+        [Fact]
+        public static void Version_CanBeUsedInGenericConstraint_IParsable()
+        {
+            static T ParseGeneric<T>(string input) where T : IParsable<T> => T.Parse(input, null);
+
+            Assert.Equal(new Version(1, 2, 3), ParseGeneric<Version>("1.2.3"));
+        }
+
+        private static T Parse<T>(string input, IFormatProvider? provider) where T : IParsable<T> => T.Parse(input, provider);
+        private static bool TryParse<T>(string? input, IFormatProvider? provider, out T? result) where T : IParsable<T> => T.TryParse(input, provider, out result);
+        private static T ParseSpan<T>(ReadOnlySpan<char> input, IFormatProvider? provider) where T : ISpanParsable<T> => T.Parse(input, provider);
+        private static bool TryParseSpan<T>(ReadOnlySpan<char> input, IFormatProvider? provider, out T? result) where T : ISpanParsable<T> => T.TryParse(input, provider, out result);
     }
 }

@@ -20,7 +20,7 @@ namespace System
 
     [Serializable]
     [TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
-    public sealed class Version : ICloneable, IComparable, IComparable<Version?>, IEquatable<Version?>, ISpanFormattable, IUtf8SpanFormattable, IUtf8SpanParsable<Version>
+    public sealed class Version : ICloneable, IComparable, IComparable<Version?>, IEquatable<Version?>, ISpanFormattable, IUtf8SpanFormattable, ISpanParsable<Version>, IUtf8SpanParsable<Version>
     {
         // AssemblyName depends on the order staying the same
         private readonly int _Major; // Do not rename (binary serialization)
@@ -291,6 +291,30 @@ namespace System
         public static Version Parse(ReadOnlySpan<char> input) =>
             ParseVersion(input, throwOnFailure: true)!;
 
+        /// <inheritdoc cref="IParsable{TSelf}.Parse(string, IFormatProvider?)"/>
+        static Version IParsable<Version>.Parse(string s, IFormatProvider? provider)
+        {
+            Version? result = ParseVersion(s.AsSpan(), throwOnFailure: false);
+            // Required to throw FormatException for invalid input according to contract.
+            if (result is null)
+            {
+                ThrowHelper.ThrowFormatInvalidString();
+            }
+            return result;
+        }
+
+        /// <inheritdoc cref="ISpanParsable{TSelf}.Parse(ReadOnlySpan{char}, IFormatProvider?)"/>
+        static Version ISpanParsable<Version>.Parse(ReadOnlySpan<char> s, IFormatProvider? provider)
+        {
+            Version? result = ParseVersion(s, throwOnFailure: false);
+            // Required to throw FormatException for invalid input according to contract.
+            if (result is null)
+            {
+                ThrowHelper.ThrowFormatInvalidString();
+            }
+            return result;
+        }
+
         /// <inheritdoc cref="IUtf8SpanParsable{TSelf}.Parse(ReadOnlySpan{byte}, IFormatProvider?)"/>
         static Version IUtf8SpanParsable<Version>.Parse(ReadOnlySpan<byte> utf8Text, IFormatProvider? provider)
         {
@@ -331,6 +355,18 @@ namespace System
         {
             result = ParseVersion(input, throwOnFailure: false);
             return result is not null;
+        }
+
+        /// <inheritdoc cref="IParsable{TSelf}.TryParse(string?, IFormatProvider?, out TSelf)"/>
+        static bool IParsable<Version>.TryParse([NotNullWhen(true)] string? s, IFormatProvider? provider, [NotNullWhen(true)] out Version? result)
+        {
+            return TryParse(s, out result);
+        }
+
+        /// <inheritdoc cref="ISpanParsable{TSelf}.TryParse(ReadOnlySpan{char}, IFormatProvider?, out TSelf)"/>
+        static bool ISpanParsable<Version>.TryParse(ReadOnlySpan<char> s, IFormatProvider? provider, [NotNullWhen(true)] out Version? result)
+        {
+            return TryParse(s, out result);
         }
 
         /// <summary>
