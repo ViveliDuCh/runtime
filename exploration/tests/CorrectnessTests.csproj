@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Include source files from benchmarks directory (shared types) -->
+    <Compile Include="..\benchmarks\StreamableTypes.cs" Link="StreamableTypes.cs" />
+    <Compile Include="..\benchmarks\StreamableStream.cs" Link="StreamableStream.cs" />
+    <Compile Include="..\benchmarks\EnumerableStreamTypes.cs" Link="EnumerableStreamTypes.cs" />
+    <Compile Include="..\benchmarks\EnumerableStreamSources.cs" Link="EnumerableStreamSources.cs" />
+    <Compile Include="..\benchmarks\EnumerableSourceStream.cs" Link="EnumerableSourceStream.cs" />
+    <Compile Include="..\benchmarks\EnumerableCorrectnessTests.cs" Link="EnumerableCorrectnessTests.cs" />
+  </ItemGroup>
+
+</Project>
