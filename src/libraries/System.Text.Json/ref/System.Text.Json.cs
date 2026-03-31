@@ -181,6 +181,7 @@ namespace System.Text.Json
         public static System.Text.Json.JsonNamingPolicy CamelCase { get { throw null; } }
         public static System.Text.Json.JsonNamingPolicy KebabCaseLower { get { throw null; } }
         public static System.Text.Json.JsonNamingPolicy KebabCaseUpper { get { throw null; } }
+        public static System.Text.Json.JsonNamingPolicy PascalCase { get { throw null; } }
         public static System.Text.Json.JsonNamingPolicy SnakeCaseLower { get { throw null; } }
         public static System.Text.Json.JsonNamingPolicy SnakeCaseUpper { get { throw null; } }
         public abstract string ConvertName(string name);
@@ -457,11 +458,13 @@ namespace System.Text.Json
         [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute("Getting a converter for a type may require reflection which depends on unreferenced code.")]
         public System.Text.Json.Serialization.JsonConverter GetConverter(System.Type typeToConvert) { throw null; }
         public System.Text.Json.Serialization.Metadata.JsonTypeInfo GetTypeInfo(System.Type type) { throw null; }
+        public System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> GetTypeInfo<T>() { throw null; }
         public void MakeReadOnly() { }
         [System.Diagnostics.CodeAnalysis.RequiresDynamicCodeAttribute("Populating unconfigured TypeInfoResolver properties with the reflection resolver requires runtime code generation.")]
         [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute("Populating unconfigured TypeInfoResolver properties with the reflection resolver requires unreferenced code.")]
         public void MakeReadOnly(bool populateMissingResolver) { }
         public bool TryGetTypeInfo(System.Type type, [System.Diagnostics.CodeAnalysis.NotNullWhenAttribute(true)] out System.Text.Json.Serialization.Metadata.JsonTypeInfo? typeInfo) { throw null; }
+        public bool TryGetTypeInfo<T>([System.Diagnostics.CodeAnalysis.NotNullWhenAttribute(true)] out System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>? typeInfo) { throw null; }
     }
     public enum JsonTokenType : byte
     {
@@ -1048,7 +1051,7 @@ namespace System.Text.Json.Serialization
     {
         public JsonExtensionDataAttribute() { }
     }
-    [System.AttributeUsageAttribute(System.AttributeTargets.Field | System.AttributeTargets.Property, AllowMultiple=false)]
+    [System.AttributeUsageAttribute(System.AttributeTargets.Class | System.AttributeTargets.Struct | System.AttributeTargets.Interface | System.AttributeTargets.Field | System.AttributeTargets.Property, AllowMultiple=false)]
     public sealed partial class JsonIgnoreAttribute : System.Text.Json.Serialization.JsonAttribute
     {
         public JsonIgnoreAttribute() { }
@@ -1076,6 +1079,14 @@ namespace System.Text.Json.Serialization
         SnakeCaseUpper = 3,
         KebabCaseLower = 4,
         KebabCaseUpper = 5,
+        PascalCase = 6,
+    }
+    [System.AttributeUsageAttribute(System.AttributeTargets.Class | System.AttributeTargets.Field | System.AttributeTargets.Interface | System.AttributeTargets.Property | System.AttributeTargets.Struct, AllowMultiple=false)]
+    public partial class JsonNamingPolicyAttribute : System.Text.Json.Serialization.JsonAttribute
+    {
+        public JsonNamingPolicyAttribute(System.Text.Json.Serialization.JsonKnownNamingPolicy namingPolicy) { }
+        protected JsonNamingPolicyAttribute(System.Text.Json.JsonNamingPolicy namingPolicy) { }
+        public System.Text.Json.JsonNamingPolicy NamingPolicy { get { throw null; } }
     }
     public enum JsonKnownReferenceHandler
     {
