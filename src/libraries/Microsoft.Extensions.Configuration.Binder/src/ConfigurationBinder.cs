@@ -223,7 +223,7 @@ namespace Microsoft.Extensions.Configuration
 
             if (options.ErrorOnUnknownConfiguration)
             {
-                HashSet<string> propertyNames = new(modelProperties.Select(mp => mp.Name),
+                HashSet<string> propertyNames = new(modelProperties.Select(GetPropertyName),
                     StringComparer.OrdinalIgnoreCase);
 
                 List<string>? missingPropertyNames = null;
@@ -1094,7 +1094,7 @@ namespace Microsoft.Extensions.Configuration
         }
 
         private static List<PropertyInfo> GetAllProperties(
-#if NET10_0_OR_GREATER
+#if NET
             [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.AllProperties)]
 #else
             [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)]
