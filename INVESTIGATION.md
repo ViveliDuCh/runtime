@@ -1,35 +1,67 @@
 # Investigation: Can CountDigits Usages Be Replaced with Log10?
 
-## Introduction
+## Objective
 
-With the addition of `IBinaryInteger<TSelf>.Log10()` to the runtime, two existing `CountDigits`
-helper methods in the codebase could potentially be consolidated using `Log10(value) + 1`.
+With the addition of `IBinaryInteger<TSelf>.Log10()` to the runtime, evaluate
+whether two existing `CountDigits` helper methods in the codebase can be
+consolidated using `Log10(value) + 1`. The relationship between the operations
+is: **`CountDigits(n) == Log10(n) + 1`** for all positive integers (and both
+return 1 / 0 respectively for input 0).
 
-The relationship between the two operations is: **`CountDigits(n) == Log10(n) + 1`** for all
-positive integers (and both return 1 / 0 respectively for the input 0).
+This investigation benchmarks the existing `CountDigits` implementations against
+their `Log10 + 1` equivalents, then evaluates correctness, complexity, and
+performance trade-offs to determine whether replacement is warranted.
 
-This investigation benchmarks the existing `CountDigits` implementations against their
-`Log10 + 1` equivalents to determine if the replacement is beneficial.
+## Background
 
-### Existing CountDigits Implementations
+### Problem Statement
 
-**1. NativeAotNameMangler** (`src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`):
-Uses Lemire's algorithm — a highly optimized, branchless digit-counting technique based on
-a 32-entry lookup table indexed by `Log2(value)`.
+Two independent `CountDigits` helper methods exist in the codebase, each with
+different algorithms and performance characteristics. Now that `Log10` is
+available as a first-class API on integer types, these helpers could potentially
+be replaced with a single expression: `Log10(value) + 1`. This would:
+
+- Reduce code duplication (eliminate two separate implementations)
+- Leverage a standardized, well-tested API
+- Potentially improve performance (or regress it — that's what we need to measure)
+
+### Call Site 1: NativeAotNameMangler
+
+**File**: `src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`
+
+Uses [Lemire's algorithm](https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/)
+— a highly optimized, branchless digit-counting technique based on a 32-entry
+lookup table indexed by `Log2(value)`:
 
 ```csharp
 [MethodImpl(MethodImplOptions.AggressiveInlining)]
 private static int CountDigits(uint value)
 {
-    // Based on https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
-    ReadOnlySpan<long> table = [ /* 32-entry Lemire table */ ];
+    ReadOnlySpan<long> table =
+    [
+        4294967296, 8589934582, 8589934582, 8589934582, 12884901788,
+        12884901788, 12884901788, 17179868184, 17179868184, 17179868184,
+        21474826480, 21474826480, 21474826480, 21474826480, 25769703776,
+        25769703776, 25769703776, 30063771072, 30063771072, 30063771072,
+        34349738368, 34349738368, 34349738368, 34349738368, 38554705664,
+        38554705664, 38554705664, 41949672960, 41949672960, 41949672960,
+        42949672960, 42949672960,
+    ];
     long tableValue = table[(int)uint.Log2(value)];
     return (int)((value + tableValue) >> 32);
 }
 ```
 
-**2. TarHeader.Write** (`src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`):
-Uses a simple divide-by-10 loop.
+**Usage context**: Called in a loop that appends numeric suffixes to mangled
+names when deduplicating symbols. The loop iterates until a unique name is found,
+calling `CountDigits(iter)` each iteration to pre-calculate the output string
+length.
+
+### Call Site 2: TarHeader.Write
+
+**File**: `src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`
+
+Uses a simple divide-by-10 loop:
 
 ```csharp
 static int CountDigits(int value)
@@ -46,6 +78,11 @@ static int CountDigits(int value)
 }
 ```
 
+**Usage context**: Called to compute the length of PAX extended attribute records
+in TAR archives. The function calculates how many decimal digits a record length
+will have, which is needed because the length field is self-referential (the
+length includes the length of the length itself).
+
 ### Proposed Replacement
 
 ```csharp
@@ -56,7 +93,9 @@ int countDigits = (int)uint.Log10(value) + 1;
 int countDigits = int.Log10(value) + 1;
 ```
 
-Where `uint.Log10` uses:
+Where `uint.Log10` (from `src/libraries/System.Private.CoreLib/src/System/UInt32.cs`)
+uses a Log2-based approximation:
+
 ```csharp
 public static uint Log10(uint value)
 {
@@ -67,24 +106,65 @@ public static uint Log10(uint value)
 }
 ```
 
+### Points Considered in This Assessment
+
+1. **Performance comparison** — How does `Log10 + 1` compare to each existing
+   implementation across different value ranges?
+2. **Algorithm characteristics** — What are the time complexities and instruction
+   profiles of each approach?
+3. **Call-site context** — Is each call site performance-sensitive?
+4. **Correctness** — Are the semantics identical (edge cases, input validation)?
+5. **Code complexity trade-off** — Does replacement simplify or complicate the code?
+
 ## Methodology
 
-- **Benchmark framework**: BenchmarkDotNet v0.14.0
+### Step 1: Algorithm Analysis
+
+Before benchmarking, the three algorithms were analyzed for theoretical
+performance characteristics:
+
+| Algorithm | Time Complexity | Key Operations | Branches |
+|---|---|---|---|
+| Lemire | O(1) | Log2 + table[32×long] + add + shift | 0 (branchless) |
+| Divide loop | O(d), d=digits | d divisions by 10 | d (loop iterations) |
+| Log10 + 1 | O(1) | Log2 + multiply + shift + table[11×uint] + compare | 1 (conditional) |
+
+Both Lemire and Log10 use `BitOperations.Log2` (hardware `LZCNT`) as their
+foundation. The key difference:
+
+- **Lemire** encodes the digit-count correction directly into the 32-entry table.
+  The final computation is a single add + shift: `(value + tableValue) >> 32`.
+- **Log10** uses a multiply (`* 1233`) + shift (`>> 12`) to approximate, then
+  corrects with a separate `PowersOf10` table comparison and conditional subtraction.
+  The `+ 1` for CountDigits adds one more arithmetic operation.
+
+### Step 2: Input Distribution Design
+
+Four distributions were tested to cover different digit-count ranges:
+
+| Distribution | Range | Digit Count | Rationale |
+|---|---|---|---|
+| `Small_1_9` | [1, 9] | 1 digit | Best case for divide loop (1 iteration) |
+| `Medium_100_9999` | [100, 9999] | 3–4 digits | Typical for string lengths, record sizes |
+| `Large_1M_1B` | [1M, 1B] | 7–10 digits | Worst case for divide loop (many iterations) |
+| `Mixed` | [1, MaxValue] | 1–10 digits | Uniform random across full uint range |
+
+Each distribution uses 1024 values with a fixed seed (`Random(42)`) for
+reproducibility.
+
+### Step 3: Benchmark Execution
+
+- **Framework**: BenchmarkDotNet v0.14.0
 - **Runtime**: .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
 - **OS**: Windows 11 (10.0.26100.7985) (Hyper-V)
-- **Data**: 1024 values per iteration, tested across four distributions:
-  - `Small_1_9`: values in [1, 9] (1 digit)
-  - `Medium_100_9999`: values in [100, 9999] (3-4 digits)
-  - `Large_1M_1B`: values in [1,000,000, 1,000,000,000] (7-10 digits)
-  - `Mixed`: uniform random across [1, int.MaxValue]
-- All implementations use `[MethodImpl(MethodImplOptions.AggressiveInlining)]`
-- Four methods compared:
-  - `Lemire_CountDigits` (baseline): NativeAotNameMangler's Lemire algorithm
-  - `Log10Plus1_UInt`: `uint.Log10(value) + 1`
-  - `DivideLoop_CountDigits`: TarHeader.Write's divide loop
-  - `Log10Plus1_Int`: `int.Log10(value) + 1` (same algorithm, int cast)
+- **Hardware intrinsics**: AVX2, AES, BMI1, BMI2, FMA, LZCNT, PCLMUL, POPCNT
+- **Job**: DefaultJob (auto-tuned warmup and iteration counts)
 
-## Results
+Four methods were benchmarked — `Lemire_CountDigits` (baseline),
+`Log10Plus1_UInt`, `DivideLoop_CountDigits`, and `Log10Plus1_Int` — all
+iterating over the same 1024-element array and summing results.
+
+## Benchmark Results
 
 | Method                 | Distribution    | Mean        | Error    | StdDev   | Ratio  |
 |----------------------- |---------------- |------------:|---------:|---------:|-------:|
@@ -110,92 +190,200 @@ public static uint Log10(uint value)
 
 ## Analysis
 
-### Call Site 1: NativeAotNameMangler.CountDigits(uint)
+### Point 1: Lemire vs Log10 + 1 (NativeAotNameMangler)
 
-| Metric | Lemire (current) | Log10 + 1 (proposed) |
-|--------|-----------------|---------------------|
-| Mean (all distributions) | ~884-890 ns | ~1,195-1,231 ns |
-| Regression | — | **~35% slower** |
-| Algorithm | Single Log2 + table lookup (64-bit shift) | Log2 + multiply + table lookup + comparison |
-| Table size | 32 × `long` (256 bytes) | 11 × `uint` (44 bytes) |
-| Branches | 0 (branchless) | 1 (conditional) |
+| Distribution | Lemire | Log10 + 1 | Ratio |
+|---|---|---|---|
+| Small | 884 ns | 1,195 ns | 1.35x slower |
+| Medium | 884 ns | 1,195 ns | 1.35x slower |
+| Large | 890 ns | 1,231 ns | 1.38x slower |
+| Mixed | 884 ns | 1,195 ns | 1.35x slower |
 
-**Verdict: Do NOT replace.** Lemire's algorithm is consistently **~35% faster** than `Log10 + 1`
-across all distributions. Both algorithms are O(1) and branchless (or near-branchless), but Lemire
-avoids the multiply step and the conditional comparison that `Log10` uses. Lemire computes
-`(value + tableValue) >> 32` — a single addition and shift — while `Log10` computes
-`(log2 * 1233) >> 12` followed by a table comparison and conditional subtraction.
+**Log10 + 1 is consistently ~35% slower than Lemire across all distributions.**
 
-The Lemire implementation is purpose-built for digit counting and is already the fastest known
-algorithm for this operation. Replacing it with `Log10 + 1` would be a pure performance regression
-with no compensating benefit (both are single-line, table-based algorithms of similar complexity).
+This is expected: both algorithms start with `Log2` (same hardware intrinsic),
+but diverge afterward:
 
-### Call Site 2: TarHeader.Write.CountDigits(int)
+- **Lemire**: `(value + table[log2]) >> 32` — 1 add + 1 shift (2 μops)
+- **Log10 + 1**: `(log2 * 1233) >> 12`, then `value < PowersOf10[approx]`,
+  then conditional select, then `+ 1` — multiply + shift + table lookup +
+  compare + conditional + add (≥6 μops)
 
-| Metric | Divide loop (current) | Log10 + 1 (proposed) |
-|--------|----------------------|---------------------|
-| Small (1-9) | 1,024 ns | 1,180 ns |
-| Medium (100-9999) | 3,544 ns | 1,195 ns |
-| Large (1M-1B) | 9,499 ns | 1,231 ns |
-| Mixed (1-MaxValue) | 13,548 ns | 1,180 ns |
+Lemire's table encodes the correction into 64-bit values that combine
+with the input via addition, eliminating the need for a separate correction
+step. This is a purpose-built algorithm for digit counting and will always
+outperform a generic Log10 followed by +1.
 
-**Verdict: Replacement is beneficial for large values, but the context matters.**
+### Point 2: Divide Loop vs Log10 + 1 (TarHeader.Write)
 
-The divide loop has **O(d)** complexity (where d = number of digits), while `Log10 + 1` is **O(1)**.
-For large values, `Log10 + 1` is **7.7-11.5x faster**. For small values (1 digit), the divide loop
-is actually 15% faster because it exits after a single division vs. Log10's full algorithm.
+| Distribution | Divide Loop | Log10 + 1 | Speedup |
+|---|---|---|---|
+| Small (1 digit) | 1,024 ns | 1,180 ns | 0.87x (15% slower) |
+| Medium (3–4 digits) | 3,544 ns | 1,195 ns | **2.97x faster** |
+| Large (7–10 digits) | 9,499 ns | 1,231 ns | **7.71x faster** |
+| Mixed (1–10 digits) | 13,548 ns | 1,180 ns | **11.5x faster** |
 
-However, there are important caveats for the TarHeader context:
+The divide loop has **O(d)** complexity where d = number of digits. For
+1-digit values, it exits after a single division (fast path), making it 15%
+faster than Log10's constant-time overhead. For larger values, the division
+loop becomes increasingly expensive while Log10 remains constant.
 
-1. **Call frequency**: `CountDigits` in `TarHeader.Write` is called to compute the length of
-   PAX extended attribute records. This is **not a hot path** — it's called once per extended
-   attribute, and TAR archive writing is I/O-bound.
+### Point 3: Call-Site Context Analysis
 
-2. **Value range**: TAR record lengths are typically small (tens to hundreds of bytes), meaning
-   the divide loop usually runs only 2-3 iterations. The performance difference is negligible
-   at these sizes (~3,500 ns vs ~1,195 ns for 3-4 digit values).
+**NativeAotNameMangler** (`CountDigits(uint)`):
+- Called in a deduplication loop during NativeAOT compilation
+- Values are iteration counters: 0, 1, 2, 3, ... (typically small)
+- The loop runs until a unique name is found — could be many iterations
+  for hot generic instantiations
+- **Performance sensitivity**: Moderate — NativeAOT compilation time matters,
+  but this is one of many operations during name mangling
 
-3. **Complexity trade-off**: The divide loop is self-contained (5 lines, no dependencies),
-   while `Log10 + 1` would require either importing `int.Log10` or adding a dependency on
-   `System.Numerics`.
+**TarHeader.Write** (`CountDigits(int)`):
+- Called once per PAX extended attribute in a TAR entry
+- Values are record lengths: typically 10–200 (2–3 digits)
+- **Performance sensitivity**: Low — TAR writing is I/O-bound; this function
+  is called infrequently with small values
 
-4. **Compilation context**: `TarHeader.Write.CountDigits` is a `static local function` inside
-   a method. Replacing it with `int.Log10(value) + 1` would actually simplify the code by
-   removing the helper entirely.
+### Point 4: Correctness Comparison
+
+| Edge Case | Lemire | Divide Loop | Log10 + 1 |
+|---|---|---|---|
+| Input = 0 | Returns 1 | Returns 1 | Returns 1 (Log10(0)=0, +1=1) ✅ |
+| Input = 1 | Returns 1 | Returns 1 | Returns 1 ✅ |
+| Input = uint.MaxValue | Returns 10 | N/A (int) | Returns 10 ✅ |
+| Input < 0 | N/A (uint) | Debug.Assert | Throws ArgumentOutOfRange ⚠️ |
+
+The negative-input behavior differs: the divide loop silently works (integer
+division of negative values is well-defined in C#), while `int.Log10` throws.
+The existing `Debug.Assert(value >= 0)` documents that negative inputs are
+not expected, so the throwing behavior of `Log10` is actually safer.
+
+### Point 5: Code Complexity Trade-off
+
+**NativeAotNameMangler replacement**:
+- Remove: 13-line method with 32-entry magic-number table
+- Add: `(int)uint.Log10(value) + 1` (1 line)
+- **However**: The Lemire algorithm is purpose-built and faster. Replacing
+  it would sacrifice ~35% performance for a single-line code simplification.
+
+**TarHeader.Write replacement**:
+- Remove: 10-line method (static local function)
+- Add: `int.Log10(value) + 1` (1 line)
+- **However**: The method is a static local function called only within its
+  enclosing method. Removing it simplifies the code with no dependency impact.
 
 ## Conclusion
 
-### Summary Table
+### Finding 1: Lemire's Algorithm Should Not Be Replaced
 
-| Call Site | Current Impl | Log10+1 Perf | Replace? | Reason |
-|-----------|-------------|-------------|----------|--------|
-| **NativeAotNameMangler** | Lemire (branchless) | 35% slower | **No** | Lemire is purpose-built and faster |
-| **TarHeader.Write** | Divide loop | 3-11x faster (large), 15% slower (small) | **Maybe** | Perf gain exists but path is not hot |
+Lemire's digit-counting algorithm outperforms `Log10 + 1` by a consistent
+~35% across all value distributions. Both are O(1) and start with the same
+`Log2` intrinsic, but Lemire's table design eliminates the multiply, compare,
+and conditional steps that `Log10` requires.
 
-### Recommendations
+**Evidence**: Ratio is 1.35–1.38 across all 4 distributions, with sub-nanosecond
+error bars confirming the result is stable and reproducible.
 
-1. **NativeAotNameMangler**: **Do not replace.** The Lemire algorithm is a superior
-   digit-counting method that outperforms `Log10 + 1` by a consistent ~35%. This is
-   not surprising — Lemire's algorithm was specifically designed for digit counting and
-   avoids the intermediate multiply/compare steps that `Log10` uses. Both use `Log2`
-   as their foundation, but Lemire encodes the correction directly into the table values
-   rather than using a separate powers-of-10 lookup.
+Replacing Lemire with `Log10 + 1` would trade a purpose-built, faster algorithm
+for a generic one, with the only benefit being a modest code simplification
+(13 lines → 1 line). This trade-off is not warranted.
 
-2. **TarHeader.Write**: **Low priority, optional improvement.** While `int.Log10(value) + 1`
-   is significantly faster for larger values, the TAR writing path is I/O-bound and this
-   function is called infrequently with small values. The change would simplify the code
-   (remove a 10-line helper in favor of a single expression) but the performance impact
-   would be imperceptible in practice.
+### Finding 2: TarHeader.Write CountDigits Could Optionally Be Replaced
 
-   If the replacement is desired for code simplification, the change would be:
-   ```csharp
-   // Before:
-   int originalDigitCount = CountDigits(length);
-   // After:
-   int originalDigitCount = int.Log10(length) + 1;
-   ```
-   Note: `int.Log10(0) + 1 = 1`, which matches `CountDigits(0) = 1` (the divide loop
-   returns 1 for input 0 because `0 / 10 == 0` triggers the break immediately). However,
-   `int.Log10` throws for negative values while the divide loop's `Debug.Assert` is
-   stripped in Release builds, so callers must ensure non-negative input (which the existing
-   `Debug.Assert` already documents).
+The divide-loop `CountDigits` in `TarHeader.Write` is 3–11x slower than
+`Log10 + 1` for values with 3+ digits. However, the practical impact is
+negligible because:
+
+1. The function is called on a non-hot I/O-bound path
+2. Input values are typically small (2–3 digits)
+3. For 1-digit values, the divide loop is actually 15% faster
+
+If the replacement is desired for **code simplification** (removing a 10-line
+helper), the change would be:
+
+```csharp
+// Before:
+int originalDigitCount = CountDigits(length);
+
+// After:
+int originalDigitCount = int.Log10(length) + 1;
+```
+
+**Correctness note**: `int.Log10(0) + 1 = 1`, matching `CountDigits(0) = 1`.
+However, `int.Log10` throws for negative values while the divide loop's
+`Debug.Assert` is stripped in Release builds — the stronger validation is
+actually an improvement.
+
+### Summary
+
+| Call Site | Current | Log10 + 1 | Replace? | Reason |
+|---|---|---|---|---|
+| **NativeAotNameMangler** | Lemire (884 ns) | 1,195 ns | **No** | 35% regression; Lemire is purpose-built |
+| **TarHeader.Write** | Divide loop (1K–13K ns) | 1,180 ns | **Optional** | Perf gain is real but path is not hot |
+
+## Limitations
+
+- **Hyper-V environment**: Benchmarks were run on a Hyper-V VM with "Unknown
+  processor". Results should be validated on bare-metal hardware (e.g., via
+  @EgorBot on Linux AMD and macOS ARM64) before making production decisions.
+- **Single architecture**: Only x64 AVX2 was tested. ARM64 does not have
+  `LZCNT` and uses a different `CLZ` instruction, which could change the
+  relative costs.
+- **Isolated benchmark**: The algorithms were benchmarked in isolation.
+  In context (NativeAOT compilation, TAR I/O), the surrounding code's
+  cache and branch predictor state may affect results.
+- **Lemire table as `ReadOnlySpan<long>`**: In the actual codebase, the Lemire
+  table is a `ReadOnlySpan<long>` initialized from an inline array literal.
+  The JIT may optimize this differently than the `static readonly long[]` used
+  in the benchmark. The benchmark used `static readonly long[]` to match
+  the `static readonly uint[]` used for `PowersOf10` in the Log10 implementation.
+
+## References
+
+- [Lemire's digit-counting algorithm](https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/)
+- `NativeAotNameMangler.CountDigits`:
+  `src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`, lines 237–249
+- `TarHeader.Write.CountDigits`:
+  `src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`, lines 927–938
+- `uint.Log10` implementation:
+  `src/libraries/System.Private.CoreLib/src/System/UInt32.cs`, lines 298–309
+- `IBinaryInteger<TSelf>.Log10` interface definition:
+  `src/libraries/System.Private.CoreLib/src/System/Numerics/IBinaryInteger.cs`, lines 263–290
+- [BenchmarkDotNet documentation](https://benchmarkdotnet.org/)
+- [Microbenchmark Design Guidelines](https://github.com/dotnet/performance/blob/main/docs/microbenchmark-design-guidelines.md)
+
+## Appendix: Benchmark Code
+
+The benchmark project is in `benchmark/CountDigitsBenchmark/` in this branch.
+
+### Full Benchmark Results (CSV)
+
+```
+Method,Distribution,Mean,Error,StdDev,Ratio,RatioSD
+Lemire_CountDigits,Large_1M_1B,889.6 ns,1.62 ns,1.43 ns,1.00,0.00
+Log10Plus1_UInt,Large_1M_1B,"1,230.9 ns",1.02 ns,0.86 ns,1.38,0.00
+DivideLoop_CountDigits,Large_1M_1B,"9,499.0 ns",12.24 ns,11.45 ns,10.68,0.02
+Log10Plus1_Int,Large_1M_1B,"1,231.1 ns",1.59 ns,1.49 ns,1.38,0.00
+Lemire_CountDigits,Medium_100_9999,884.4 ns,0.60 ns,0.56 ns,1.00,0.00
+Log10Plus1_UInt,Medium_100_9999,"1,195.1 ns",1.52 ns,1.34 ns,1.35,0.00
+DivideLoop_CountDigits,Medium_100_9999,"3,544.4 ns",7.49 ns,7.01 ns,4.01,0.01
+Log10Plus1_Int,Medium_100_9999,"1,194.6 ns",1.31 ns,1.09 ns,1.35,0.00
+Lemire_CountDigits,Mixed,884.0 ns,0.68 ns,0.61 ns,1.00,0.00
+Log10Plus1_UInt,Mixed,"1,194.9 ns",0.83 ns,0.73 ns,1.35,0.00
+DivideLoop_CountDigits,Mixed,"13,547.8 ns",40.05 ns,37.46 ns,15.33,0.04
+Log10Plus1_Int,Mixed,"1,179.7 ns",1.27 ns,1.19 ns,1.33,0.00
+Lemire_CountDigits,Small_1_9,884.2 ns,1.15 ns,1.08 ns,1.00,0.00
+Log10Plus1_UInt,Small_1_9,"1,194.6 ns",1.06 ns,0.82 ns,1.35,0.00
+DivideLoop_CountDigits,Small_1_9,"1,024.2 ns",0.60 ns,0.50 ns,1.16,0.00
+Log10Plus1_Int,Small_1_9,"1,180.0 ns",2.56 ns,2.27 ns,1.33,0.00
+```
+
+### Environment
+
+```
+BenchmarkDotNet v0.14.0, Windows 11 (10.0.26100.7985) (Hyper-V)
+Unknown processor
+.NET SDK 11.0.100-preview.3.26170.106
+  [Host]     : .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
+  DefaultJob : .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
+```
