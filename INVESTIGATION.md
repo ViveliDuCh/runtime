@@ -3,10 +3,14 @@
 ## Objective
 
 With the addition of `IBinaryInteger<TSelf>.Log10()` to the runtime, evaluate
-whether two existing `CountDigits` helper methods in the codebase can be
+whether existing `CountDigits` helper methods in the codebase can be
 consolidated using `Log10(value) + 1`. The relationship between the operations
 is: **`CountDigits(n) == Log10(n) + 1`** for all positive integers (and both
 return 1 / 0 respectively for input 0).
+
+This investigation covers **all 6 distinct CountDigits definitions** found across
+4 components in the codebase (CoreLib formatting, NativeAOT compiler, TAR library,
+JIT diagnostics), plus 2 derived/test definitions.
 
 This investigation benchmarks the existing `CountDigits` implementations against
 their `Log10 + 1` equivalents, then evaluates correctness, complexity, and
@@ -316,10 +320,61 @@ actually an improvement.
 
 ### Summary
 
-| Call Site | Current | Log10 + 1 | Replace? | Reason |
-|---|---|---|---|---|
-| **NativeAotNameMangler** | Lemire (884 ns) | 1,195 ns | **No** | 35% regression; Lemire is purpose-built |
-| **TarHeader.Write** | Divide loop (1K–13K ns) | 1,180 ns | **Optional** | Perf gain is real but path is not hot |
+#### Complete CountDigits Inventory
+
+The codebase contains **6 distinct CountDigits definitions** across 4 components.
+The original investigation benchmarked only 2 of them. The table below covers all
+6 and evaluates each for `Log10 + 1` replacement.
+
+| # | Location | Signature | Algorithm | Call Sites | Hot Path? | Replace with Log10+1? | Rationale |
+|---|---|---|---|---|---|---|---|
+| 1 | `FormattingHelpers` `.CountDigits.cs` | `CountDigits(uint)` | Lemire (32×long table) | ~12 (Number.Formatting, TimeSpanParse, BigInteger) | **Yes** — number formatting is perf-critical | **No** | Same Lemire algo as #3; already the fastest known uint digit counter. Log10+1 benchmarked 35% slower. |
+| 2 | `FormattingHelpers` `.CountDigits.cs` | `CountDigits(ulong)` | fmtlib-style (64×byte log2-to-pow10 map + 20×ulong powers table) | ~10 (Number.Formatting for long/ulong) | **Yes** — number formatting is perf-critical | **No** | Purpose-built O(1) branchless algorithm with dedicated tables for ulong range. `ulong.Log10` uses the same approach (Log2 → approximate → correct) but this implementation has the correction baked into the table lookup, avoiding the extra multiply and conditional. |
+| 3 | `NativeAotNameMangler.cs` | `CountDigits(uint)` | Lemire (32×long table) — identical to #1 | 1 (name dedup loop) | Moderate — NativeAOT compile time | **No** | Benchmarked: 35% faster than Log10+1 consistently. |
+| 4 | `TarHeader.Write.cs` | `CountDigits(int)` | Divide-by-10 loop | 4 (PAX record length) | **No** — I/O-bound TAR writing | **Optional** | Benchmarked: Log10+1 is 3–11x faster for large values, but this path handles small values (2–3 digits) where the divide loop is only ~15% slower. Replacement simplifies code (removes 10-line helper) with no practical perf impact. |
+| 5 | `jit/utils.cpp` | `CountDigits(unsigned, unsigned base)` | Divide loop (supports arbitrary base) | 6 (JIT diagnostics: block numbering, IBC weights) | **No** — DEBUG-only, not in release builds | **No** | C++ code in `#ifdef DEBUG`; `Log10` is a C# API not available here. Also supports non-base-10, which Log10 cannot. |
+| 6 | `jit/utils.cpp` | `CountDigits(double, unsigned base)` | Divide loop (floating-point, arbitrary base) | 0 direct (exists alongside #5) | **No** — DEBUG-only | **No** | Same as #5: C++ debug code, arbitrary base, floating-point input. Not applicable. |
+
+**Not counted as separate definitions** (derived/test code):
+- `FormattingHelpers.CountDigits(UInt128)` — delegates to `CountDigits(ulong)` after range reduction; shares the same algorithm family
+- `ElidedBoundsChecks.CountDigits(ulong)` — JIT test verifying bounds-check elision; not production code
+
+#### Why the Most Critical Implementations Should NOT Be Replaced
+
+**FormattingHelpers.CountDigits(uint)** and **CountDigits(ulong)** (#1 and #2)
+are the highest-impact call sites — they power `int.ToString()`, `long.ToString()`,
+`uint.ToString()`, `ulong.ToString()`, `Int128.ToString()`, `TimeSpan.ToString()`,
+and `BigInteger.ToString()`. These are among the most frequently called methods in
+all of .NET.
+
+Both use purpose-built algorithms that compute digit count in a single step:
+
+- **uint version** (Lemire): `(value + table[Log2(value)]) >> 32` — the table
+  encodes both the digit count AND the correction factor into a single 64-bit value,
+  so the final computation is just add + shift. No multiply, no conditional.
+
+- **ulong version** (fmtlib): Uses a two-level lookup — first maps Log2 to an
+  approximate digit count via a 64-byte table, then compares against the exact
+  power of 10. Similar in structure to `Log10` but with the correction table
+  designed for direct digit-count output.
+
+`Log10 + 1` uses the same Log2 foundation but adds intermediate steps (multiply
+by 1233, shift right 12, compare against PowersOf10 table, conditional subtract,
+then add 1). Each extra step adds latency. The purpose-built algorithms eliminate
+these steps by encoding the correction differently.
+
+#### Where Replacement Makes Sense
+
+Only **TarHeader.Write.CountDigits** (#4) is a reasonable candidate:
+
+- **Code simplification**: Removes a 10-line static local function, replacing
+  4 call sites with `int.Log10(length) + 1`
+- **Stronger validation**: `int.Log10` throws on negative input vs. a Debug.Assert
+  that's stripped in Release
+- **No perf impact**: The TAR writing path is I/O-bound; the function is called
+  ≤4 times per PAX extended attribute with values typically in the 10–200 range
+- **Semantic clarity**: `Log10(n) + 1` directly expresses "number of decimal digits"
+  as a mathematical identity
 
 ## Limitations
 
@@ -337,14 +392,29 @@ actually an improvement.
   The JIT may optimize this differently than the `static readonly long[]` used
   in the benchmark. The benchmark used `static readonly long[]` to match
   the `static readonly uint[]` used for `PowersOf10` in the Log10 implementation.
+- **FormattingHelpers.CountDigits(ulong) and UInt128 not benchmarked**: The
+  investigation benchmarked the `uint` Lemire algorithm and the `int` divide loop.
+  The `ulong` fmtlib-style algorithm and the `UInt128` variant were not separately
+  benchmarked. However, the `ulong` algorithm is structurally similar to Lemire
+  (Log2 + purpose-built table + single correction step), so the conclusion —
+  that purpose-built digit counters outperform generic Log10+1 — applies equally.
 
 ## References
 
 - [Lemire's digit-counting algorithm](https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/)
+- [fmtlib do_count_digits](https://github.com/fmtlib/fmt/blob/662adf4f33346ba9aba8b072194e319869ede54a/include/fmt/format.h#L1124)
+- `FormattingHelpers.CountDigits(uint)`:
+  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs`, lines 64–106
+- `FormattingHelpers.CountDigits(ulong)`:
+  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs`, lines 15–61
+- `FormattingHelpers.CountDigits(UInt128)`:
+  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.Int128.cs`, lines 12–50
 - `NativeAotNameMangler.CountDigits`:
   `src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`, lines 237–249
 - `TarHeader.Write.CountDigits`:
   `src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`, lines 927–938
+- `jit/utils.cpp CountDigits`:
+  `src/coreclr/jit/utils.cpp`, lines 2148–2170 (DEBUG-only, C++)
 - `uint.Log10` implementation:
   `src/libraries/System.Private.CoreLib/src/System/UInt32.cs`, lines 298–309
 - `IBinaryInteger<TSelf>.Log10` interface definition:
