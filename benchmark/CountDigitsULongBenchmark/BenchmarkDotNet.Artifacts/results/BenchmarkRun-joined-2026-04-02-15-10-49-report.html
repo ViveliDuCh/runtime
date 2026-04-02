@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>BenchmarkRun-joined-2026-04-02-15-10-49</title>
+
+<style type="text/css">
+	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+	td, th { padding: 6px 13px; border: 1px solid #ddd; text-align: right; }
+	tr { background-color: #fff; border-top: 1px solid #ccc; }
+	tr:nth-child(even) { background: #f8f8f8; }
+</style>
+</head>
+<body>
+<pre><code>
+BenchmarkDotNet v0.14.0, Windows 11 (10.0.26100.7985) (Hyper-V)
+Unknown processor
+.NET SDK 10.0.104
+  [Host]     : .NET 10.0.4 (10.0.426.12010), X64 RyuJIT AVX2
+  DefaultJob : .NET 10.0.4 (10.0.426.12010), X64 RyuJIT AVX2
+</code></pre>
+<pre><code></code></pre>
+
+<table>
+<thead><tr><th>Type             </th><th>Method                 </th><th>Distribution</th><th>Mean</th><th>Error</th><th>StdDev</th><th>Ratio</th><th>Allocated</th><th>Alloc Ratio</th>
+</tr>
+</thead><tbody><tr><td>CountDigitsULongBench</td><td>Fmtlib_CountDigits</td><td>Large_1e15_Max</td><td>1.274 &mu;s</td><td>0.0024 &mu;s</td><td>0.0021 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Log10Plus1_ULong</td><td>Large_1e15_Max</td><td>1.426 &mu;s</td><td>0.0022 &mu;s</td><td>0.0020 &mu;s</td><td>1.12</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsUInt128Bench</td><td>FormattingHelpers_CountDigits</td><td>Large_full_range</td><td>33.065 &mu;s</td><td>0.2291 &mu;s</td><td>0.2143 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsUInt128Bench</td><td>Log10Plus1_UInt128</td><td>Large_full_range</td><td>2.266 &mu;s</td><td>0.0218 &mu;s</td><td>0.0193 &mu;s</td><td>0.07</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Fmtlib_CountDigits</td><td>Medium_1M_1B</td><td>1.272 &mu;s</td><td>0.0032 &mu;s</td><td>0.0029 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Log10Plus1_ULong</td><td>Medium_1M_1B</td><td>1.447 &mu;s</td><td>0.0014 &mu;s</td><td>0.0011 &mu;s</td><td>1.14</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Fmtlib_CountDigits</td><td>Mixed</td><td>1.272 &mu;s</td><td>0.0013 &mu;s</td><td>0.0011 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Log10Plus1_ULong</td><td>Mixed</td><td>1.419 &mu;s</td><td>0.0021 &mu;s</td><td>0.0020 &mu;s</td><td>1.12</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Fmtlib_CountDigits</td><td>Small_1_999</td><td>1.276 &mu;s</td><td>0.0062 &mu;s</td><td>0.0055 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsULongBench</td><td>Log10Plus1_ULong</td><td>Small_1_999</td><td>1.540 &mu;s</td><td>0.0017 &mu;s</td><td>0.0015 &mu;s</td><td>1.21</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsUInt128Bench</td><td>FormattingHelpers_CountDigits</td><td>Small_ulong_range</td><td>1.774 &mu;s</td><td>0.0045 &mu;s</td><td>0.0040 &mu;s</td><td>1.00</td><td>-</td><td>NA</td>
+</tr><tr><td>CountDigitsUInt128Bench</td><td>Log10Plus1_UInt128</td><td>Small_ulong_range</td><td>2.223 &mu;s</td><td>0.0212 &mu;s</td><td>0.0177 &mu;s</td><td>1.25</td><td>-</td><td>NA</td>
+</tr></tbody></table>
+</body>
+</html>
