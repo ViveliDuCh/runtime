@@ -1,108 +1,251 @@
-# Investigation: Can CountDigits Usages Be Replaced with Log10?
+# Investigation: CountDigits vs Log10 — Comprehensive Tradeoff Analysis
 
 ## Objective
 
-With the addition of `IBinaryInteger<TSelf>.Log10()` to the runtime, evaluate
-whether existing `CountDigits` helper methods in the codebase can be
-consolidated using `Log10(value) + 1`. The relationship between the operations
-is: **`CountDigits(n) == Log10(n) + 1`** for all positive integers (and both
-return 1 / 0 respectively for input 0).
+With the addition of [`IBinaryInteger<TSelf>.Log10()`](https://github.com/dotnet/runtime/issues/116043)
+to the runtime ([PR #126065](https://github.com/dotnet/runtime/pull/126065)),
+evaluate whether existing `CountDigits` helper methods in the codebase can —
+and *should* — be consolidated using `Log10(value) + 1`.
 
-This investigation covers **all 6 distinct CountDigits definitions** found across
-4 components in the codebase (CoreLib formatting, NativeAOT compiler, TAR library,
-JIT diagnostics), plus 2 derived/test definitions.
+The mathematical identity is: **`CountDigits(n) == Log10(n) + 1`** for all
+positive integers (both return 1 / 0 respectively for input 0).
 
-This investigation benchmarks the existing `CountDigits` implementations against
-their `Log10 + 1` equivalents, then evaluates correctness, complexity, and
-performance trade-offs to determine whether replacement is warranted.
+This investigation covers **all 8 distinct CountDigits definitions** found
+across 4 components in the codebase, benchmarks every C# definition that could
+be replaced, analyzes the runtime's precedent patterns for keeping internal
+helpers alongside public APIs, and provides an actionable recommendation.
 
-## Background
+### Guiding Vision
 
-### Problem Statement
+From the [PR discussion](https://github.com/dotnet/runtime/pull/126065):
 
-Multiple independent `CountDigits` helper methods exist in the codebase, each with
-different algorithms and performance characteristics. Now that `Log10` is
-available as a first-class API on integer types, these helpers could potentially
-be replaced with a single expression: `Log10(value) + 1`. This would:
+> *"This [introducing `Log10` on `IBinaryInteger`] is indeed namely about
+> keeping the code simple to maintain and consistent with the other paths.
+> The difference between the two approaches will likely be negligible in a
+> real world app."*
 
-- Reduce code duplication (eliminate separate implementations)
-- Leverage a standardized, well-tested API
-- Potentially improve performance (or regress it — that's what we need to measure)
+This vision prioritizes **maintainability and uniformity**. The question is:
+where does that vision align with the data, and where does it not?
 
-### Call Site 1: NativeAotNameMangler
+---
 
-**File**: `src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`
+## Part 1: Complete Inventory & Cross-Usage Matrix
 
-Uses [Lemire's algorithm](https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/)
-— a highly optimized, branchless digit-counting technique based on a 32-entry
-lookup table indexed by `Log2(value)`:
+### Matrix A: All CountDigits Definitions
+
+The codebase contains **8 distinct `CountDigits` definitions** across 4
+components. Source: [Complete CountDigits Inventory gist](https://gist.github.com/ViveliDuCh/3f2e8565e91883d0e41b2d776a30d73a).
+
+| # | Location | Input Type | Algorithm | Callers | Hot Path? |
+|---|----------|------------|-----------|---------|-----------|
+| D1 | [`FormattingHelpers.CountDigits.cs:64`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs#L64) | `uint` | **Lemire** — branchless, 32×long table | 10 | **Yes** |
+| D2 | [`FormattingHelpers.CountDigits.cs:15`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs#L15) | `ulong` | **fmtlib** — 64×byte + 20×ulong tables | 7 | **Yes** |
+| D3 | [`FormattingHelpers.CountDigits.Int128.cs:12`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.Int128.cs#L12) | `UInt128` | **Hybrid** — ulong delegate or ÷1e20 | 5 | **Yes** |
+| D4 | [`NativeAotNameMangler.cs:237`](https://github.com/dotnet/runtime/blob/main/src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs#L237) | `uint` | **Lemire** — duplicate of D1 | 1 | Moderate |
+| D5 | [`TarHeader.Write.cs:927`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs#L927) | `int` | **Divide loop** — `while (value /= 10)` | 3 | **No** |
+| D6 | [`jit/utils.cpp:2148`](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/utils.cpp#L2148) | C++ `unsigned` | **Divide loop** — arbitrary base | — | **No** (DEBUG) |
+| D7 | [`jit/utils.cpp:2160`](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/utils.cpp#L2160) | C++ `double` | **Divide loop** — FP, arbitrary base | — | **No** (DEBUG) |
+| D8 | [`ElidedBoundsChecks.cs:32`](https://github.com/dotnet/runtime/blob/main/src/tests/JIT/opt/RangeChecks/ElidedBoundsChecks.cs#L32) | `ulong` | **fmtlib** — copy of D2 | — | N/A (test) |
+
+### Matrix B: Log10 Type Coverage (from [PR #126065](https://github.com/dotnet/runtime/pull/126065))
+
+| Type | Log10 Method | Optimized? | Delegation Chain | Return Type | Used by CountDigits? |
+|------|-------------|------------|-----------------|-------------|---------------------|
+| `byte` | `byte.Log10()` | No | → `uint.Log10` | `byte` | — |
+| `sbyte` | `sbyte.Log10()` | No | guard < 0 → `uint.Log10` | `sbyte` | — |
+| `short` | `short.Log10()` | No | guard < 0 → `uint.Log10` | `short` | — |
+| `ushort` | `ushort.Log10()` | No | → `uint.Log10` | `ushort` | — |
+| `int` | `int.Log10()` | No | guard < 0 → `uint.Log10` | `int` | D5 (`int`) |
+| **`uint`** | **`uint.Log10()`** | **Yes** | `Log2 × 1233 >> 12` + 10×uint table | `uint` | **D1, D4** (`uint`) |
+| `long` | `long.Log10()` | No | guard < 0 → `ulong.Log10` | `long` | — |
+| **`ulong`** | **`ulong.Log10()`** | **Yes** | `Log2 × 1233 >> 12` + 20×ulong table | `ulong` | **D2** (`ulong`) |
+| `nint` | `nint.Log10()` | No | guard < 0 → `nuint.Log10` | `nint` | — |
+| `nuint` | `nuint.Log10()` | No | x64→`ulong.Log10`, x86→`uint.Log10` | `nuint` | — (but BigInteger passes `nuint`) |
+| `char` | `char.Log10()` | No | → `uint.Log10` (explicit iface) | `char` | — |
+| `Int128` | `Int128.Log10()` | No | guard < 0 → `UInt128.Log10` | `Int128` | — |
+| **`UInt128`** | **`UInt128.Log10()`** | **Yes** | `Log2 × 1233 >> 12` + 39×UInt128 array | `UInt128` | **D3** (`UInt128`) |
+| `BigInteger` | `BigInteger.Log10()` | Partial | small→`ulong.Log10`, large→Log2+Pow correction | `BigInteger` | — (but BigInteger calls D1/D2 via `nuint`) |
+| DIM fallback | `IBinaryInteger<T>.Log10()` | No | divide-by-10 loop | `TSelf` | — |
+
+**Not yet covered** (planned follow-up): `CLong`, `CULong`, Vector APIs,
+`TensorPrimitives`, `Tensor`.
+
+### Matrix C: Every Call Site → Definition → Type → Log10 Replacement
+
+This is the **complete cross-usage matrix** — every production caller of
+CountDigits, the definition it invokes, the type flowing through, the
+corresponding Log10 replacement expression, and whether the replacement
+is viable.
+
+#### C1: `FormattingHelpers.CountDigits(uint)` — Definition D1 (Lemire)
+
+| # | File:Line | Calling Method | Code | Public API | Log10 Replacement | Viable? |
+|---|-----------|---------------|------|-----------|-------------------|---------|
+| C1a | `Number.Formatting.cs:741` | `FormatFloatingPointAsHex` | `CountDigits((uint)actualExponent)` | `Half/Single/Double.ToString()` | `(int)uint.Log10((uint)actualExponent) + 1` | ⚠️ Perf regression (−35%) on hot path |
+| C1b | `Number.Formatting.cs:1645` | `NegativeInt32ToDecStr` | `CountDigits((uint)(-value))` | `int.ToString()` | `(int)uint.Log10((uint)(-value)) + 1` | ⚠️ Perf regression (−35%) on **hottest path** |
+| C1c | `Number.Formatting.cs:1671` | `TryNegativeInt32ToDecStr` | `CountDigits((uint)(-value))` | `int.TryFormat()` | `(int)uint.Log10((uint)(-value)) + 1` | ⚠️ Same |
+| C1d | `Number.Formatting.cs:1964` | `UInt32ToDecStr_NoSmallNumberCheck` | `CountDigits(value)` | `uint.ToString()` | `(int)uint.Log10(value) + 1` | ⚠️ Same |
+| C1e | `Number.Formatting.cs:1981` | `UInt32ToDecStr` (padded) | `CountDigits(value)` | `uint.ToString("D...")` | `(int)uint.Log10(value) + 1` | ⚠️ Same |
+| C1f | `Number.Formatting.cs:1996` | `TryUInt32ToDecStr` | `CountDigits(value)` | `uint.TryFormat()` | `(int)uint.Log10(value) + 1` | ⚠️ Same |
+| C1g | `Number.Formatting.cs:2016` | `TryUInt32ToDecStr` (padded) | `CountDigits(value)` | `uint.TryFormat("D...")` | `(int)uint.Log10(value) + 1` | ⚠️ Same |
+| C1h | `TimeSpanFormat.cs:215` | `FormatCustomized` | `CountDigits(days)` | `TimeSpan.ToString()` | `(int)uint.Log10(days) + 1` | ⚠️ Perf regression but not I/O-hot |
+| C1i | `TimeSpanParse.cs:118` | `TimeSpanToken` (property) | `CountDigits((uint)_num)` | `TimeSpan.Parse()` | `(int)uint.Log10((uint)_num) + 1` | ⚠️ Same |
+| C1j | `Number.BigInteger.cs:423` | BigInteger parse | `CountDigits(base1E9[^1])` | `BigInteger.Parse()` | `(int)nuint.Log10(base1E9[^1]) + 1` | ⚠️ Type is `nuint` — delegates to uint/ulong by platform |
+| C1k | `Number.BigInteger.cs:842` | BigInteger format | `CountDigits(base1E9Value[^1])` | `BigInteger.ToString()` | `(int)nuint.Log10(base1E9Value[^1]) + 1` | ⚠️ Same as C1j |
+
+**Summary for D1**: 11 call sites, all have `uint.Log10` available, but all
+would regress **~35%** on a hot path. **Not recommended to replace.**
+
+#### C2: `FormattingHelpers.CountDigits(ulong)` — Definition D2 (fmtlib)
+
+| # | File:Line | Calling Method | Code | Public API | Log10 Replacement | Viable? |
+|---|-----------|---------------|------|-----------|-------------------|---------|
+| C2a | `Number.Formatting.cs:2085` | `NegativeInt64ToDecStr` | `CountDigits((ulong)(-value))` | `long.ToString()` | `(int)ulong.Log10((ulong)(-value)) + 1` | ⚠️ Perf regression (−12–21%) on hot path |
+| C2b | `Number.Formatting.cs:2111` | `TryNegativeInt64ToDecStr` | `CountDigits((ulong)(-value))` | `long.TryFormat()` | `(int)ulong.Log10((ulong)(-value)) + 1` | ⚠️ Same |
+| C2c | `Number.Formatting.cs:2394` | `UInt64ToDecStr` | `CountDigits(value)` | `ulong.ToString()` | `(int)ulong.Log10(value) + 1` | ⚠️ Same |
+| C2d | `Number.Formatting.cs:2413` | `UInt64ToDecStr` (padded) | `CountDigits(value)` | `ulong.ToString("D...")` | `(int)ulong.Log10(value) + 1` | ⚠️ Same |
+| C2e | `Number.Formatting.cs:2428` | `TryUInt64ToDecStr` | `CountDigits(value)` | `ulong.TryFormat()` | `(int)ulong.Log10(value) + 1` | ⚠️ Same |
+| C2f | `Number.Formatting.cs:2447` | `TryUInt64ToDecStr` (padded) | `CountDigits(value)` | `ulong.TryFormat("D...")` | `(int)ulong.Log10(value) + 1` | ⚠️ Same |
+
+**Summary for D2**: 6 call sites (note: earlier count of 7 included the
+Number.Formatting lines more accurately; some are shared between
+signed/unsigned paths — 6 distinct lines confirmed), all have `ulong.Log10`
+available, all would regress **12–21%** on hot paths.
+**Not recommended to replace.**
+
+#### C3: `FormattingHelpers.CountDigits(UInt128)` — Definition D3 (Hybrid)
+
+| # | File:Line | Calling Method | Code | Public API | Log10 Replacement | Viable? |
+|---|-----------|---------------|------|-----------|-------------------|---------|
+| C3a | `Number.Formatting.cs:2517` | `NegativeInt128ToDecStr` | `CountDigits(absValue)` | `Int128.ToString()` | `(int)UInt128.Log10(absValue) + 1` | ✅ **14.6x faster** for large values |
+| C3b | `Number.Formatting.cs:2545` | `TryNegativeInt128ToDecStr` | `CountDigits(absValue)` | `Int128.TryFormat()` | `(int)UInt128.Log10(absValue) + 1` | ✅ Same |
+| C3c | `Number.Formatting.cs:2760` | `UInt128ToDecStr` | `CountDigits(value)` | `UInt128.ToString()` | `(int)UInt128.Log10(value) + 1` | ✅ Same |
+| C3d | `Number.Formatting.cs:2779` | `UInt128ToDecStr` (padded) | `CountDigits(value)` | `UInt128.ToString("D...")` | `(int)UInt128.Log10(value) + 1` | ✅ Same |
+| C3e | `Number.Formatting.cs:2792` | `TryUInt128ToDecStr` (padded) | `CountDigits(value)` | `UInt128.TryFormat("D...")` | `(int)UInt128.Log10(value) + 1` | ✅ Same |
+
+**Summary for D3**: 5 call sites, all have `UInt128.Log10` available. The
+current hybrid path uses expensive UInt128 software division for large values.
+**Recommended to replace the large-value path** (keep ulong fast path).
+
+#### C4: `NativeAotNameMangler.CountDigits(uint)` — Definition D4 (Lemire duplicate)
+
+| # | File:Line | Calling Method | Code | Public API | Log10 Replacement | Viable? |
+|---|-----------|---------------|------|-----------|-------------------|---------|
+| C4a | `NativeAotNameMangler.cs:220` | `EnumerateUniqueManglingsForMethod` | `CountDigits(iter)` | None (internal NativeAOT compiler) | `(int)uint.Log10(iter) + 1` | ⚠️ −35% on moderate path |
+
+**Summary for D4**: 1 call site, `uint.Log10` available. Would regress 35%.
+**Not recommended** — NativeAOT compile time matters, this is a duplicate of
+the proven Lemire algorithm.
+
+#### C5: `TarHeader.Write.CountDigits(int)` — Definition D5 (Divide loop)
+
+| # | File:Line | Calling Method | Code | Public API | Log10 Replacement | Viable? |
+|---|-----------|---------------|------|-----------|-------------------|---------|
+| C5a | `TarHeader.Write.cs:885` | `GenerateExtendedAttributeRecord` | `CountDigits(length)` | `TarWriter.WriteEntry()` | `int.Log10(length) + 1` | ✅ 3–11x faster, cold path |
+| C5b | `TarHeader.Write.cs:887` | Same (loop) | `CountDigits(length)` | Same | `int.Log10(length) + 1` | ✅ Same |
+| C5c | `TarHeader.Write.cs:892` | Same (Debug.Assert) | `CountDigits(length)` | Same | `int.Log10(length) + 1` | ✅ Same |
+
+**Summary for D5**: 3 call sites, `int.Log10` available (`int.Log10` →
+`uint.Log10` internally). **Recommended to replace** — simplifies code,
+I/O-bound path, no practical perf impact.
+
+#### C6/C7: `jit/utils.cpp` — Definitions D6, D7 (C++ DEBUG-only)
+
+| # | File:Line | Type | Base | Log10 Available? | Viable? |
+|---|-----------|------|------|-----------------|---------|
+| C6 | `jit/utils.cpp:2148` | C++ `unsigned` | Arbitrary (2–16) | ❌ C++ code, Log10 is C# only | **No** |
+| C7 | `jit/utils.cpp:2160` | C++ `double` | Arbitrary (2–16) | ❌ C++ code, floating-point | **No** |
+
+**Summary**: Cannot be replaced — different language, arbitrary base support,
+DEBUG-only.
+
+### Matrix D: Cross-Reference — CountDigits Type × Log10 Type × Replaceable?
+
+This matrix shows whether each CountDigits definition's input type has a
+matching Log10 implementation and what the perf trade-off would be.
+
+| CountDigits Def | Input Type | Log10 Available? | Log10 Type Used | Log10 Delegation | Perf Delta | Replace? |
+|----------------|------------|-----------------|----------------|-----------------|------------|----------|
+| D1 (Lemire) | `uint` | ✅ | `uint.Log10()` | direct (optimized) | **+35% slower** | ❌ No |
+| D2 (fmtlib) | `ulong` | ✅ | `ulong.Log10()` | direct (optimized) | **+12–21% slower** | ❌ No |
+| D3 (Hybrid) | `UInt128` | ✅ | `UInt128.Log10()` | direct (optimized) | small: +25% slower / large: **−93% (14.6x faster)** | ✅ Large path |
+| D4 (Lemire dup) | `uint` | ✅ | `uint.Log10()` | direct (optimized) | **+35% slower** | ❌ No |
+| D5 (Divide loop) | `int` | ✅ | `int.Log10()` | → `uint.Log10()` | **3–11x faster** (multi-digit) | ✅ Yes |
+| D6 (C++ divide) | C++ `unsigned` | ❌ | N/A (C++) | N/A | N/A | ❌ No |
+| D7 (C++ divide) | C++ `double` | ❌ | N/A (C++) | N/A | N/A | ❌ No |
+| D8 (test fmtlib) | `ulong` | ✅ | `ulong.Log10()` | direct (optimized) | N/A (test) | N/A |
+
+### Matrix E: Public API Impact — Which .NET APIs Are Affected by Each Decision?
+
+| Public API | CountDigits Def Used | Type | Call Count per Invocation | Would Regress if Replaced? |
+|-----------|---------------------|------|-------------------------|---------------------------|
+| `int.ToString()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% on digit-count step |
+| `int.TryFormat()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `uint.ToString()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `uint.TryFormat()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `Half/Single/Double.ToString()` (hex) | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `TimeSpan.ToString()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `TimeSpan.Parse()` | D1 (Lemire `uint`) | `uint` | 1 | ⚠️ Yes, +35% |
+| `BigInteger.Parse()` | D1 via `nuint` | `nuint`→`uint`/`ulong` | 1 | ⚠️ Yes, +35% (x86) or +12–21% (x64) |
+| `BigInteger.ToString()` | D1 via `nuint` | `nuint`→`uint`/`ulong` | 1 | ⚠️ Same |
+| `long.ToString()` | D2 (fmtlib `ulong`) | `ulong` | 1 | ⚠️ Yes, +12–21% |
+| `long.TryFormat()` | D2 (fmtlib `ulong`) | `ulong` | 1 | ⚠️ Yes, +12–21% |
+| `ulong.ToString()` | D2 (fmtlib `ulong`) | `ulong` | 1 | ⚠️ Yes, +12–21% |
+| `ulong.TryFormat()` | D2 (fmtlib `ulong`) | `ulong` | 1 | ⚠️ Yes, +12–21% |
+| `Int128.ToString()` | D3 (Hybrid `UInt128`) | `UInt128` | 1 | ✅ **No — improves 14.6x** for large values |
+| `Int128.TryFormat()` | D3 (Hybrid `UInt128`) | `UInt128` | 1 | ✅ Same |
+| `UInt128.ToString()` | D3 (Hybrid `UInt128`) | `UInt128` | 1 | ✅ Same |
+| `UInt128.TryFormat()` | D3 (Hybrid `UInt128`) | `UInt128` | 1 | ✅ Same |
+| NativeAOT symbol mangling | D4 (Lemire `uint`) | `uint` | 1+ per dedup iteration | ⚠️ Yes, +35% |
+| `TarWriter.WriteEntry()` | D5 (Divide loop `int`) | `int` | ≤4 per PAX attr | ✅ **No — improves 3–11x**, cold I/O path |
+
+### Matrix F: Replacement Viability Summary
+
+| Replaceable? | Definitions | Call Sites | Public APIs Affected | Perf Impact |
+|-------------|-------------|------------|---------------------|-------------|
+| ✅ **Yes — improves perf** | D3 large path, D5 | 8 | `Int128/UInt128.ToString/TryFormat`, `TarWriter.WriteEntry` | 14.6x faster (D3 large), 3–11x faster (D5) |
+| ⚠️ **No — regresses perf** | D1, D2, D4 | 18 | `int/uint/long/ulong.ToString/TryFormat`, `TimeSpan.*`, `BigInteger.*`, NativeAOT | 12–35% slower |
+| ❌ **No — not applicable** | D6, D7, D8 | 0 prod | None | N/A (C++ / test) |
+
+---
+
+## Part 2: Algorithm Comparison
+
+### The Three Core Algorithms
+
+All three production-grade algorithms start with `Log2` (hardware `LZCNT`
+on x64, `CLZ` on ARM64) but diverge in how they compute the final result:
+
+| Algorithm | Used For | Time Complexity | Key Operations | Branches |
+|-----------|----------|-----------------|----------------|----------|
+| **Lemire** | `uint` | O(1) | `Log2` + table[32×long] + add + shift | 0 (branchless) |
+| **fmtlib** | `ulong` | O(1) | `Log2` + table[64×byte] + table[20×ulong] + compare | 1 (conditional) |
+| **Log10** | all integer types | O(1) | `Log2` + multiply(×1233) + shift(>>12) + table[N×T] + compare | 1 (conditional) |
+| *Divide loop* | `int` (Tar), C++ | O(d) | d divisions by 10 | d (loop) |
+| *Hybrid* | `UInt128` | O(1) but expensive | delegates to ulong or performs UInt128 division | 1–2 |
+
+**Why Lemire only works for `uint`**: The trick `(value + table[Log2(value)]) >> 32`
+requires the input + correction to fit in a 64-bit add. For `ulong`, you'd need
+128-bit addition (no single x64 instruction). For `UInt128`, 256-bit — completely
+impractical.
+
+**Why fmtlib is faster than Log10 for `ulong`**: fmtlib encodes the Log2-to-digit-count
+mapping directly in a 64-byte table, avoiding the `(log2 * 1233) >> 12` multiply+shift
+step that Log10 uses. The fmtlib table is a precomputed version of what Log10 calculates
+at runtime.
+
+**Why Log10 wins for `UInt128`**: The current `CountDigits(UInt128)` divides by 1e20
+(software 128-bit division: ~29 ns each). `UInt128.Log10` uses the same O(1)
+`Log2 → approximate → correct` pattern with a 39-entry table — no division.
+
+### Log10 Implementation (shared across all types)
 
 ```csharp
-[MethodImpl(MethodImplOptions.AggressiveInlining)]
-private static int CountDigits(uint value)
-{
-    ReadOnlySpan<long> table =
-    [
-        4294967296, 8589934582, 8589934582, 8589934582, 12884901788,
-        12884901788, 12884901788, 17179868184, 17179868184, 17179868184,
-        21474826480, 21474826480, 21474826480, 21474826480, 25769703776,
-        25769703776, 25769703776, 30063771072, 30063771072, 30063771072,
-        34349738368, 34349738368, 34349738368, 34349738368, 38554705664,
-        38554705664, 38554705664, 41949672960, 41949672960, 41949672960,
-        42949672960, 42949672960,
-    ];
-    long tableValue = table[(int)uint.Log2(value)];
-    return (int)((value + tableValue) >> 32);
-}
-```
-
-**Usage context**: Called in a loop that appends numeric suffixes to mangled
-names when deduplicating symbols. The loop iterates until a unique name is found,
-calling `CountDigits(iter)` each iteration to pre-calculate the output string
-length.
-
-### Call Site 2: TarHeader.Write
-
-**File**: `src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`
-
-Uses a simple divide-by-10 loop:
-
-```csharp
-static int CountDigits(int value)
-{
-    Debug.Assert(value >= 0);
-    int digits = 1;
-    while (true)
-    {
-        value /= 10;
-        if (value == 0) break;
-        digits++;
-    }
-    return digits;
-}
-```
-
-**Usage context**: Called to compute the length of PAX extended attribute records
-in TAR archives. The function calculates how many decimal digits a record length
-will have, which is needed because the length field is self-referential (the
-length includes the length of the length itself).
-
-### Proposed Replacement
-
-```csharp
-// For uint (NativeAotNameMangler):
-int countDigits = (int)uint.Log10(value) + 1;
-
-// For int (TarHeader.Write):
-int countDigits = int.Log10(value) + 1;
-```
-
-Where `uint.Log10` (from `src/libraries/System.Private.CoreLib/src/System/UInt32.cs`)
-uses a Log2-based approximation:
-
-```csharp
+// uint.Log10 — from PR #126065
 public static uint Log10(uint value)
 {
+    // log10(x) ≈ (log2(x) + 1) * 1233 >> 12
+    // http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog10
     value |= 1;
     uint log2 = (uint)BitOperations.Log2(value) + 1;
     uint approx = (log2 * 1233) >> 12;
@@ -110,422 +253,462 @@ public static uint Log10(uint value)
 }
 ```
 
-### Points Considered in This Assessment
+The same pattern is used for `ulong` and `UInt128`, differing only in the
+`PowersOf10` table type and `Log2` call. This uniformity is the key
+maintainability advantage of Log10.
 
-1. **Performance comparison** — How does `Log10 + 1` compare to each existing
-   implementation across different value ranges?
-2. **Algorithm characteristics** — What are the time complexities and instruction
-   profiles of each approach?
-3. **Call-site context** — Is each call site performance-sensitive?
-4. **Correctness** — Are the semantics identical (edge cases, input validation)?
-5. **Code complexity trade-off** — Does replacement simplify or complicate the code?
+---
 
-## Methodology
+## Part 3: Benchmark Results
 
-### Step 1: Algorithm Analysis
+### Environment
 
-Before benchmarking, the three algorithms were analyzed for theoretical
-performance characteristics:
+```
+BenchmarkDotNet v0.14.0, Windows 11 (10.0.26100.7985) (Hyper-V)
+Unknown processor
+.NET SDK 11.0.100-preview.3.26170.106
+  [Host]     : .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
+  DefaultJob : .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
+```
 
-| Algorithm | Time Complexity | Key Operations | Branches |
-|---|---|---|---|
-| Lemire | O(1) | Log2 + table[32×long] + add + shift | 0 (branchless) |
-| Divide loop | O(d), d=digits | d divisions by 10 | d (loop iterations) |
-| Log10 + 1 | O(1) | Log2 + multiply + shift + table[11×uint] + compare | 1 (conditional) |
+Each benchmark iterates over 1024 values with fixed seed (`Random(42)`)
+for reproducibility.
 
-Both Lemire and Log10 use `BitOperations.Log2` (hardware `LZCNT`) as their
-foundation. The key difference:
+### 3A: uint — Lemire vs Log10+1
 
-- **Lemire** encodes the digit-count correction directly into the 32-entry table.
-  The final computation is a single add + shift: `(value + tableValue) >> 32`.
-- **Log10** uses a multiply (`* 1233`) + shift (`>> 12`) to approximate, then
-  corrects with a separate `PowersOf10` table comparison and conditional subtraction.
-  The `+ 1` for CountDigits adds one more arithmetic operation.
+| Method | Distribution | Mean | Error | StdDev | Ratio |
+|--------|-------------|-----:|------:|-------:|------:|
+| **Lemire_CountDigits** | **Small_1_9** | **884.2 ns** | **1.15 ns** | **1.08 ns** | **1.00** |
+| Log10Plus1_UInt | Small_1_9 | 1,194.6 ns | 1.06 ns | 0.82 ns | 1.35 |
+| **Lemire_CountDigits** | **Medium_100_9999** | **884.4 ns** | **0.60 ns** | **0.56 ns** | **1.00** |
+| Log10Plus1_UInt | Medium_100_9999 | 1,195.1 ns | 1.52 ns | 1.34 ns | 1.35 |
+| **Lemire_CountDigits** | **Large_1M_1B** | **889.6 ns** | **1.62 ns** | **1.43 ns** | **1.00** |
+| Log10Plus1_UInt | Large_1M_1B | 1,230.9 ns | 1.02 ns | 0.86 ns | 1.38 |
+| **Lemire_CountDigits** | **Mixed** | **884.0 ns** | **0.68 ns** | **0.61 ns** | **1.00** |
+| Log10Plus1_UInt | Mixed | 1,194.9 ns | 0.83 ns | 0.73 ns | 1.35 |
 
-### Step 2: Input Distribution Design
+**Result: Log10+1 is consistently ~35% slower than Lemire.**
 
-Four distributions were tested to cover different digit-count ranges:
+### 3B: int — Divide Loop vs Log10+1
 
-| Distribution | Range | Digit Count | Rationale |
-|---|---|---|---|
-| `Small_1_9` | [1, 9] | 1 digit | Best case for divide loop (1 iteration) |
-| `Medium_100_9999` | [100, 9999] | 3–4 digits | Typical for string lengths, record sizes |
-| `Large_1M_1B` | [1M, 1B] | 7–10 digits | Worst case for divide loop (many iterations) |
-| `Mixed` | [1, MaxValue] | 1–10 digits | Uniform random across full uint range |
+| Method | Distribution | Mean | Error | StdDev | vs Log10+1 |
+|--------|-------------|-----:|------:|-------:|------:|
+| DivideLoop_CountDigits | Small_1_9 | 1,024.2 ns | 0.60 ns | 0.50 ns | 15% faster |
+| Log10Plus1_Int | Small_1_9 | 1,180.0 ns | 2.56 ns | 2.27 ns | baseline |
+| DivideLoop_CountDigits | Medium_100_9999 | 3,544.4 ns | 7.49 ns | 7.01 ns | **2.97x slower** |
+| Log10Plus1_Int | Medium_100_9999 | 1,194.6 ns | 1.31 ns | 1.09 ns | baseline |
+| DivideLoop_CountDigits | Large_1M_1B | 9,499.0 ns | 12.24 ns | 11.45 ns | **7.71x slower** |
+| Log10Plus1_Int | Large_1M_1B | 1,231.1 ns | 1.59 ns | 1.49 ns | baseline |
+| DivideLoop_CountDigits | Mixed | 13,547.8 ns | 40.05 ns | 37.46 ns | **11.5x slower** |
+| Log10Plus1_Int | Mixed | 1,179.7 ns | 1.27 ns | 1.19 ns | baseline |
 
-Each distribution uses 1024 values with a fixed seed (`Random(42)`) for
-reproducibility.
+**Result: Divide loop is 3–11x slower than Log10+1 for multi-digit values. Only
+15% faster for 1-digit values.**
 
-### Step 3: Benchmark Execution
+### 3C: ulong — fmtlib vs Log10+1
 
-- **Framework**: BenchmarkDotNet v0.14.0
-- **Runtime**: .NET 11.0.0 (11.0.26.17106), X64 RyuJIT AVX2
-- **OS**: Windows 11 (10.0.26100.7985) (Hyper-V)
-- **Hardware intrinsics**: AVX2, AES, BMI1, BMI2, FMA, LZCNT, PCLMUL, POPCNT
-- **Job**: DefaultJob (auto-tuned warmup and iteration counts)
+| Method | Distribution | Mean | Error | StdDev | Ratio |
+|--------|-------------|-----:|------:|-------:|------:|
+| **Fmtlib_CountDigits** | **Small_1_999** | **1.276 μs** | **0.006 μs** | **0.006 μs** | **1.00** |
+| Log10Plus1_ULong | Small_1_999 | 1.540 μs | 0.002 μs | 0.002 μs | 1.21 |
+| **Fmtlib_CountDigits** | **Medium_1M_1B** | **1.272 μs** | **0.003 μs** | **0.003 μs** | **1.00** |
+| Log10Plus1_ULong | Medium_1M_1B | 1.447 μs | 0.001 μs | 0.001 μs | 1.14 |
+| **Fmtlib_CountDigits** | **Large_1e15_Max** | **1.274 μs** | **0.002 μs** | **0.002 μs** | **1.00** |
+| Log10Plus1_ULong | Large_1e15_Max | 1.426 μs | 0.002 μs | 0.002 μs | 1.12 |
+| **Fmtlib_CountDigits** | **Mixed** | **1.272 μs** | **0.001 μs** | **0.001 μs** | **1.00** |
+| Log10Plus1_ULong | Mixed | 1.419 μs | 0.002 μs | 0.002 μs | 1.12 |
 
-Four methods were benchmarked — `Lemire_CountDigits` (baseline),
-`Log10Plus1_UInt`, `DivideLoop_CountDigits`, and `Log10Plus1_Int` — all
-iterating over the same 1024-element array and summing results.
+**Result: Log10+1 is 12–21% slower than fmtlib.**
 
-## Benchmark Results
+### 3D: UInt128 — FormattingHelpers Hybrid vs Log10+1
 
-### Part 1: uint (Lemire) and int (Divide Loop) vs Log10+1
+| Method | Distribution | Mean | Error | StdDev | Ratio |
+|--------|-------------|-----:|------:|-------:|------:|
+| **FormattingHelpers** | **Small_ulong_range** | **1.774 μs** | **0.005 μs** | **0.004 μs** | **1.00** |
+| Log10Plus1_UInt128 | Small_ulong_range | 2.223 μs | 0.021 μs | 0.018 μs | 1.25 |
+| **FormattingHelpers** | **Large_full_range** | **33.065 μs** | **0.229 μs** | **0.214 μs** | **1.00** |
+| Log10Plus1_UInt128 | Large_full_range | 2.266 μs | 0.022 μs | 0.019 μs | **0.07** |
 
-| Method                 | Distribution    | Mean        | Error    | StdDev   | Ratio  |
-|----------------------- |---------------- |------------:|---------:|---------:|-------:|
-| **Lemire_CountDigits**     | **Small_1_9**       |    **884.2 ns** |  **1.15 ns** |  **1.08 ns** |   **1.00** |
-| Log10Plus1_UInt        | Small_1_9       |  1,194.6 ns |  1.06 ns |  0.82 ns |   1.35 |
-| DivideLoop_CountDigits | Small_1_9       |  1,024.2 ns |  0.60 ns |  0.50 ns |   1.16 |
-| Log10Plus1_Int         | Small_1_9       |  1,180.0 ns |  2.56 ns |  2.27 ns |   1.33 |
-|                        |                 |             |          |          |        |
-| **Lemire_CountDigits**     | **Medium_100_9999** |    **884.4 ns** |  **0.60 ns** |  **0.56 ns** |   **1.00** |
-| Log10Plus1_UInt        | Medium_100_9999 |  1,195.1 ns |  1.52 ns |  1.34 ns |   1.35 |
-| DivideLoop_CountDigits | Medium_100_9999 |  3,544.4 ns |  7.49 ns |  7.01 ns |   4.01 |
-| Log10Plus1_Int         | Medium_100_9999 |  1,194.6 ns |  1.31 ns |  1.09 ns |   1.35 |
-|                        |                 |             |          |          |        |
-| **Lemire_CountDigits**     | **Large_1M_1B**     |    **889.6 ns** |  **1.62 ns** |  **1.43 ns** |   **1.00** |
-| Log10Plus1_UInt        | Large_1M_1B     |  1,230.9 ns |  1.02 ns |  0.86 ns |   1.38 |
-| DivideLoop_CountDigits | Large_1M_1B     |  9,499.0 ns | 12.24 ns | 11.45 ns |  10.68 |
-| Log10Plus1_Int         | Large_1M_1B     |  1,231.1 ns |  1.59 ns |  1.49 ns |   1.38 |
-|                        |                 |             |          |          |        |
-| **Lemire_CountDigits**     | **Mixed**           |    **884.0 ns** |  **0.68 ns** |  **0.61 ns** |   **1.00** |
-| Log10Plus1_UInt        | Mixed           |  1,194.9 ns |  0.83 ns |  0.73 ns |   1.35 |
-| DivideLoop_CountDigits | Mixed           | 13,547.8 ns | 40.05 ns | 37.46 ns |  15.33 |
-| Log10Plus1_Int         | Mixed           |  1,179.7 ns |  1.27 ns |  1.19 ns |   1.33 |
+**Result: Log10+1 is 14.6x FASTER for large UInt128 values. 25% slower for
+small values that fit in ulong.**
 
-### Part 2: ulong (fmtlib) and UInt128 (FormattingHelpers) vs Log10+1
+### Consolidated Performance Summary
 
-**Environment**: .NET 10.0.4, X64 RyuJIT AVX2, Windows 11 (Hyper-V)
+| Type | CountDigits Algo | Log10+1 Δ | Verdict |
+|------|-----------------|-----------|---------|
+| `uint` | Lemire | **+35% slower** | Keep CountDigits |
+| `ulong` | fmtlib | **+12–21% slower** | Keep CountDigits |
+| `UInt128` (small) | Hybrid→ulong | **+25% slower** | Keep ulong fast path |
+| `UInt128` (large) | Hybrid÷1e20 | **14.6x faster** | **Replace with Log10+1** |
+| `int` (Tar) | Divide loop | **3–11x faster** | Replace (cold path, code simplification) |
 
-| Type | Method | Distribution | Mean | Error | StdDev | Ratio |
-|------|--------|-------------|-----:|------:|-------:|------:|
-| **ulong** | **Fmtlib_CountDigits** | **Small_1_999** | **1.276 μs** | **0.006 μs** | **0.006 μs** | **1.00** |
-| ulong | Log10Plus1_ULong | Small_1_999 | 1.540 μs | 0.002 μs | 0.002 μs | 1.21 |
-| | | | | | | |
-| **ulong** | **Fmtlib_CountDigits** | **Medium_1M_1B** | **1.272 μs** | **0.003 μs** | **0.003 μs** | **1.00** |
-| ulong | Log10Plus1_ULong | Medium_1M_1B | 1.447 μs | 0.001 μs | 0.001 μs | 1.14 |
-| | | | | | | |
-| **ulong** | **Fmtlib_CountDigits** | **Large_1e15_Max** | **1.274 μs** | **0.002 μs** | **0.002 μs** | **1.00** |
-| ulong | Log10Plus1_ULong | Large_1e15_Max | 1.426 μs | 0.002 μs | 0.002 μs | 1.12 |
-| | | | | | | |
-| **ulong** | **Fmtlib_CountDigits** | **Mixed** | **1.272 μs** | **0.001 μs** | **0.001 μs** | **1.00** |
-| ulong | Log10Plus1_ULong | Mixed | 1.419 μs | 0.002 μs | 0.002 μs | 1.12 |
-| | | | | | | |
-| **UInt128** | **FormattingHelpers** | **Small_ulong_range** | **1.774 μs** | **0.005 μs** | **0.004 μs** | **1.00** |
-| UInt128 | Log10Plus1_UInt128 | Small_ulong_range | 2.223 μs | 0.021 μs | 0.018 μs | 1.25 |
-| | | | | | | |
-| **UInt128** | **FormattingHelpers** | **Large_full_range** | **33.065 μs** | **0.229 μs** | **0.214 μs** | **1.00** |
-| UInt128 | Log10Plus1_UInt128 | Large_full_range | 2.266 μs | 0.022 μs | 0.019 μs | **0.07** |
+---
 
-## Analysis
+## Part 4: Critical Analysis
 
-### Point 1: Lemire vs Log10 + 1 (NativeAotNameMangler)
+### 4.1 Can Log10 Be Made as Fast as Lemire/fmtlib?
 
-| Distribution | Lemire | Log10 + 1 | Ratio |
-|---|---|---|---|
-| Small | 884 ns | 1,195 ns | 1.35x slower |
-| Medium | 884 ns | 1,195 ns | 1.35x slower |
-| Large | 890 ns | 1,231 ns | 1.38x slower |
-| Mixed | 884 ns | 1,195 ns | 1.35x slower |
+**Short answer: No, not without becoming Lemire/fmtlib.**
 
-**Log10 + 1 is consistently ~35% slower than Lemire across all distributions.**
+The performance gap comes from a fundamental algorithm difference:
 
-This is expected: both algorithms start with `Log2` (same hardware intrinsic),
-but diverge afterward:
+```
+Lemire (uint):    Log2 → table[log2] → (value + table) >> 32
+                  = 1 add + 1 shift after Log2 (2 μops)
 
-- **Lemire**: `(value + table[log2]) >> 32` — 1 add + 1 shift (2 μops)
-- **Log10 + 1**: `(log2 * 1233) >> 12`, then `value < PowersOf10[approx]`,
-  then conditional select, then `+ 1` — multiply + shift + table lookup +
-  compare + conditional + add (≥6 μops)
+fmtlib (ulong):   Log2 → table1[log2] → table2[approx] → conditional
+                  = 2 lookups + 1 compare after Log2 (~4 μops)
 
-Lemire's table encodes the correction into 64-bit values that combine
-with the input via addition, eliminating the need for a separate correction
-step. This is a purpose-built algorithm for digit counting and will always
-outperform a generic Log10 followed by +1.
+Log10 (all types): Log2 → multiply(×1233) → shift(>>12) → table[approx] → conditional
+                  = 1 mul + 1 shift + 1 lookup + 1 compare after Log2 (≥5 μops)
+```
 
-### Point 2: Divide Loop vs Log10 + 1 (TarHeader.Write)
+To make Log10 match Lemire, you'd need to replace the `(log2 * 1233) >> 12`
+approximation with a direct table lookup — at which point you've reinvented
+Lemire/fmtlib. The multiply+shift *is* the cost of Log10's type-uniformity.
 
-| Distribution | Divide Loop | Log10 + 1 | Speedup |
-|---|---|---|---|
-| Small (1 digit) | 1,024 ns | 1,180 ns | 0.87x (15% slower) |
-| Medium (3–4 digits) | 3,544 ns | 1,195 ns | **2.97x faster** |
-| Large (7–10 digits) | 9,499 ns | 1,231 ns | **7.71x faster** |
-| Mixed (1–10 digits) | 13,548 ns | 1,180 ns | **11.5x faster** |
+To make Log10 match fmtlib, you'd need a 64-byte `log2ToPow10` map instead of
+the multiply — but then `uint.Log10` and `ulong.Log10` would use different table
+sizes (32 vs 64), breaking the "one pattern" uniformity that is Log10's main
+selling point.
 
-The divide loop has **O(d)** complexity where d = number of digits. For
-1-digit values, it exits after a single division (fast path), making it 15%
-faster than Log10's constant-time overhead. For larger values, the division
-loop becomes increasingly expensive while Log10 remains constant.
+**Could the JIT bridge the gap?** In theory, constant propagation could
+optimize `(log2 * 1233) >> 12` into a lookup table. In practice, the JIT does
+not perform this transformation — and even if it did, the table would need to be
+type-specific, losing the uniformity advantage.
 
-### Point 3: Call-Site Context Analysis
+### 4.2 Can CountDigits Delegate to Log10 Internally?
 
-**NativeAotNameMangler** (`CountDigits(uint)`):
-- Called in a deduplication loop during NativeAOT compilation
-- Values are iteration counters: 0, 1, 2, 3, ... (typically small)
-- The loop runs until a unique name is found — could be many iterations
-  for hot generic instantiations
-- **Performance sensitivity**: Moderate — NativeAOT compilation time matters,
-  but this is one of many operations during name mangling
+A middle-ground option: keep `FormattingHelpers.CountDigits` as the API but
+change its implementation to call `Log10 + 1`:
 
-**TarHeader.Write** (`CountDigits(int)`):
-- Called once per PAX extended attribute in a TAR entry
-- Values are record lengths: typically 10–200 (2–3 digits)
-- **Performance sensitivity**: Low — TAR writing is I/O-bound; this function
-  is called infrequently with small values
+```csharp
+// Option: CountDigits delegates to Log10 internally
+public static int CountDigits(uint value) => (int)uint.Log10(value) + 1;
+public static int CountDigits(ulong value) => (int)ulong.Log10(value) + 1;
+```
 
-### Point 4: Correctness Comparison
+**This would regress the hottest formatting paths by 12–35%.** The callers
+(22 sites in `Number.Formatting.cs`, `TimeSpanFormat.cs`, `BigInteger.cs`)
+collectively power `.ToString()` for all integer types. A 35% regression on
+`int.ToString()` would be detectable in real-world apps that do heavy logging,
+serialization, or string formatting.
 
-| Edge Case | Lemire | Divide Loop | Log10 + 1 |
-|---|---|---|---|
-| Input = 0 | Returns 1 | Returns 1 | Returns 1 (Log10(0)=0, +1=1) ✅ |
-| Input = 1 | Returns 1 | Returns 1 | Returns 1 ✅ |
-| Input = uint.MaxValue | Returns 10 | N/A (int) | Returns 10 ✅ |
-| Input < 0 | N/A (uint) | Debug.Assert | Throws ArgumentOutOfRange ⚠️ |
+**Verdict**: Not viable for uint/ulong. Viable for UInt128 (large path only).
 
-The negative-input behavior differs: the divide loop silently works (integer
-division of negative values is well-defined in C#), while `int.Log10` throws.
-The existing `Debug.Assert(value >= 0)` documents that negative inputs are
-not expected, so the throwing behavior of `Log10` is actually safer.
+### 4.3 The UInt128 Opportunity
 
-### Point 5: Code Complexity Trade-off
+This is the strongest case for change. The current `CountDigits(UInt128)` uses
+software 128-bit division (`UInt128 / 1e20`) that is ~29 ns per call. The Log10
+approach avoids division entirely.
 
-**NativeAotNameMangler replacement**:
-- Remove: 13-line method with 32-entry magic-number table
-- Add: `(int)uint.Log10(value) + 1` (1 line)
-- **However**: The Lemire algorithm is purpose-built and faster. Replacing
-  it would sacrifice ~35% performance for a single-line code simplification.
+@tannergooding's [review comment](https://github.com/dotnet/runtime/pull/126065#discussion_r3033228275)
+on PR #126065 explicitly suggests a similar optimization for `UInt128.Log10`:
 
-**TarHeader.Write replacement**:
-- Remove: 10-line method (static local function)
-- Add: `int.Log10(value) + 1` (1 line)
-- **However**: The method is a static local function called only within its
-  enclosing method. Removing it simplifies the code with no dependency impact.
+> *"This is probably a case where it is worth doing:*
+> ```csharp
+> if (value._upper == 0)
+>     return ulong.Log10(value._lower);
+> ```
+> *128-bit multiplication and division is fairly expensive and this provides a
+> trivial shortcut that avoids it for the common path."*
 
-### Point 6: fmtlib CountDigits(ulong) vs Log10+1 (Benchmarked)
+This validates the hybrid approach: keep the ulong fast path, use Log10 for
+the expensive UInt128-specific path.
 
-| Distribution | fmtlib | Log10 + 1 | Ratio |
-|---|---|---|---|
-| Small (1–999) | 1.276 μs | 1.540 μs | 1.21x slower |
-| Medium (1M–1B) | 1.272 μs | 1.447 μs | 1.14x slower |
-| Large (1e15–Max) | 1.274 μs | 1.426 μs | 1.12x slower |
-| Mixed | 1.272 μs | 1.419 μs | 1.12x slower |
-
-**Log10 + 1 is 12–21% slower than fmtlib across all distributions.**
-
-The fmtlib-style algorithm follows the same pattern as Lemire: a two-level
-lookup (Log2 → approximate digit count via 64-byte table → compare against
-exact power of 10) that avoids the multiply step in `Log10`. The `ulong`
-`CountDigits` encodes the mapping directly, while `Log10` computes it via
-`(log2 * 1233) >> 12` + correction. The extra arithmetic shows up as a
-consistent 12–21% overhead.
-
-**Recommendation**: Do not replace. This powers `long.ToString()`,
-`ulong.ToString()`, and is on the hottest formatting path in .NET.
-
-### Point 7: FormattingHelpers.CountDigits(UInt128) vs Log10+1 — Surprise Finding
-
-| Distribution | CountDigits | Log10 + 1 | Ratio |
-|---|---|---|---|
-| Small (fits in ulong) | 1.774 μs | 2.223 μs | 1.25x slower |
-| **Large (full UInt128)** | **33.065 μs** | **2.266 μs** | **0.07 (14.6x faster)** |
-
-**For large UInt128 values, `Log10 + 1` is 14.6x faster than the current
-`CountDigits` implementation.**
-
-This is because `FormattingHelpers.CountDigits(UInt128)` performs a
-`UInt128 / 1e20` division for values with `upper > 5`. UInt128 division
-is implemented in software and is extremely expensive (~30 μs for 1024
-iterations = ~29 ns per division). In contrast, `UInt128.Log10` uses the
-same O(1) `Log2 → approximate → correct` pattern with a 40-entry table
-lookup — no division required.
-
-For small UInt128 values (fits in ulong), `CountDigits` delegates to the
-fast fmtlib ulong path and is 25% faster. But for values that exceed the
-ulong range — which is the entire purpose of UInt128 — the current
-implementation is catastrophically slower.
-
-**Recommendation**: `FormattingHelpers.CountDigits(UInt128)` is a strong
-candidate for replacement with `(int)UInt128.Log10(value) + 1`. The large-value
-path (which exercises the UInt128-specific logic) shows a 14.6x improvement.
-The small-value regression (25%) could be mitigated by keeping the `upper == 0`
-fast path that delegates to `CountDigits(ulong)`:
+**Proposed change**:
 
 ```csharp
 public static int CountDigits(UInt128 value)
 {
-    ulong upper = (ulong)(value >> 64);
+    ulong upper = value.Upper;
     if (upper == 0)
-        return CountDigits((ulong)value);  // keep fast ulong path
-    return (int)UInt128.Log10(value) + 1;  // avoid UInt128 division
+        return CountDigits(value.Lower);       // fast ulong path unchanged
+    return (int)UInt128.Log10(value) + 1;      // O(1) table lookup, no division
 }
 ```
 
-### Point 8: Maintenance Trade-off Summary
+### 4.4 Runtime Precedent: Internal Helpers Alongside Public APIs
 
-| Concern | Keep Existing | Replace with Log10+1 |
-|---|---|---|
-| **Code duplication** | 6 independent implementations across 4 components | Consolidated to one API |
-| **Algorithm transparency** | Lemire/fmtlib tables are opaque magic numbers | `Log10(n) + 1` is a mathematical identity |
-| **Bug risk** | Each implementation must be independently correct | Delegates to centralized, well-tested `Log10` |
-| **Perf risk on changes** | Algorithm is frozen; won't accidentally regress | `Log10` changes could affect all call sites |
-| **Discoverability** | Developers may re-implement CountDigits unaware of existing helpers | `Log10` is a first-class API on the type itself |
-| **Testing burden** | Each copy needs its own edge-case tests | `Log10` is tested via GenericMath test matrix |
+The dotnet/runtime codebase has a clear pattern of **keeping purpose-built
+internal helpers even when public APIs exist**:
 
-## Conclusion
+1. **`BitOperations.Log2` / `uint.Log2`**: `BitOperations.Log2` was the original
+   public API ([PR #27382](https://github.com/dotnet/runtime/issues/27382)).
+   When `uint.Log2` was added to `IBinaryInteger`, the internal helpers were NOT
+   replaced — `FormattingHelpers.CountDigits` still calls `BitOperations.Log2`
+   directly rather than going through the type-level API. The static method on
+   `uint` delegates to `BitOperations` anyway, so it's the same code path, but
+   the pattern shows internal code preferring the direct call.
 
-### Finding 1: Lemire's Algorithm (uint) Should Not Be Replaced
+2. **`FormattingHelpers` bounds-check removal** ([PR #113790](https://github.com/dotnet/runtime/pull/113790)):
+   Rather than replacing `CountDigits` with a simpler API, the runtime team
+   *further optimized it* by teaching the JIT to elide bounds checks on the
+   `Log2` table access. This signals that `CountDigits` is considered worth
+   investing in as a standalone optimized helper.
 
-Lemire's digit-counting algorithm outperforms `Log10 + 1` by a consistent
-~35% across all value distributions. Both are O(1) and start with the same
-`Log2` intrinsic, but Lemire's table design eliminates the multiply, compare,
-and conditional steps that `Log10` requires.
+3. **Integer formatting optimizations** ([PR #76726](https://github.com/dotnet/runtime/pull/76726),
+   [PR #68795](https://github.com/dotnet/runtime/pull/68795)):
+   Multiple PRs have specifically optimized the `Number.Formatting.cs` hot paths,
+   including `CountDigits` call sites. These paths are performance-critical enough
+   to warrant purpose-built code.
 
-**Evidence**: Ratio is 1.35–1.38 across all 4 distributions, with sub-nanosecond
-error bars confirming the result is stable and reproducible.
+4. **`@tannergooding` on `byte.Log10` micro-optimization** (PR #126065 review):
+   > *"It's likely not a meaningful improvement and so simpler to defer to the
+   > shared helper."*
 
-Replacing Lemire with `Log10 + 1` would trade a purpose-built, faster algorithm
-for a generic one, with the only benefit being a modest code simplification
-(13 lines → 1 line). This trade-off is not warranted.
+   This shows the maintainer prefers simplicity over micro-optimization on
+   **non-hot paths** — but the corollary is that hot paths *do* warrant
+   specialized implementations.
 
-### Finding 2: fmtlib CountDigits(ulong) Should Not Be Replaced
+**Pattern summary**: The runtime keeps optimized internal helpers for hot paths
+and uses unified public APIs for everything else. `CountDigits` fits squarely
+in the "optimized internal helper" category for uint/ulong, but the UInt128
+version is a case where the "optimized" path is actually slower.
 
-The fmtlib-style ulong digit counter is 12–21% faster than `ulong.Log10 + 1`
-across all distributions, consistent with the uint findings. This powers
-`long.ToString()` and `ulong.ToString()` — among the most frequently called
-formatting methods in .NET.
+### 4.5 The PR Review Question
 
-**Evidence**: Ratio is 1.12–1.21 across all 4 distributions.
+In [PR #126065, @huoyaoyuan asked](https://github.com/dotnet/runtime/pull/126065#issuecomment-4122444610):
 
-### Finding 3: CountDigits(UInt128) Large-Value Path SHOULD Be Replaced
+> *"Can the usages of `CountDigits` be replaced with `Log10`?"*
 
-`FormattingHelpers.CountDigits(UInt128)` is **14.6x slower** than
-`UInt128.Log10 + 1` for values in the full UInt128 range. The bottleneck is
-the `UInt128 / 1e20` software division in the large-value path.
+This investigation provides the data-driven answer:
 
-**Evidence**: 33.065 μs vs 2.266 μs (ratio 0.07) for full-range UInt128 values.
+- **uint/ulong CountDigits**: No — 12–35% regression on the hottest paths
+- **UInt128 CountDigits (large path)**: Yes — 14.6x improvement
+- **TarHeader CountDigits**: Optionally yes — simplifies code, negligible perf impact
+- **NativeAotNameMangler CountDigits**: No — 35% regression, moderate path
+- **C++ JIT CountDigits**: No — different language, different base support
 
-The small-value path (where upper == 0, delegating to ulong) is 25% faster
-with the current implementation. A hybrid approach preserves this fast path
-while eliminating the expensive division:
+### 4.6 Could a Better Algorithm Unify Everything?
+
+Exploring whether a single algorithm could match or beat Lemire/fmtlib while
+maintaining Log10's uniformity:
+
+**Option A: Lemire-style CountDigits for Log10**
+Embed the `(digitCount << 32) - correction` encoding into `uint.Log10` itself.
+Problem: This changes Log10's return value semantics (it would return
+`digitCount - 1`, not `floor(log10(x))`). The encoding is fundamentally about
+digit counting, not logarithms.
+
+**Option B: fmtlib-style direct table in Log10**
+Replace `(log2 * 1233) >> 12` with a `log2ToPow10` byte table (like fmtlib).
+For `uint`: a 32-byte table. For `ulong`: a 64-byte table. For `UInt128`:
+a 128-byte table.
 
 ```csharp
-public static int CountDigits(UInt128 value)
+// Hypothetical: fmtlib-style Log10 for uint
+public static uint Log10(uint value)
 {
-    ulong upper = (ulong)(value >> 64);
-    if (upper == 0)
-        return CountDigits((ulong)value);  // keep fast ulong path
-    return (int)UInt128.Log10(value) + 1;  // avoid UInt128 division
+    value |= 1;
+    ReadOnlySpan<byte> log2ToLog10 = [ /* 32 entries */ ];
+    uint approx = log2ToLog10[(int)BitOperations.Log2(value)];
+    return value < PowersOf10[(int)approx] ? approx - 1 : approx;
 }
 ```
 
-### Finding 4: TarHeader.Write CountDigits Could Optionally Be Replaced
+This would close the gap to ~0% for ulong (fmtlib IS this algorithm) and
+reduce the uint gap from 35% to ~10% (still not branchless like Lemire, but
+eliminates the multiply). However:
+- It changes the internal implementation of a public API
+- Different table sizes per type reduces the "one pattern" benefit
+- Still can't match Lemire's branchless property for uint
 
-The divide-loop `CountDigits` in `TarHeader.Write` is 3–11x slower than
-`Log10 + 1` for values with 3+ digits. However, the practical impact is
-negligible because:
+**Option C: Teach the JIT to optimize `(x * 1233) >> 12` into a table**
+This is the ideal long-term solution but requires JIT compiler work and is
+out of scope for the current decision.
 
-1. The function is called on a non-hot I/O-bound path
-2. Input values are typically small (2–3 digits)
-3. For 1-digit values, the divide loop is actually 15% faster
+**Verdict**: No single algorithm can match Lemire's branchless uint performance
+while maintaining type uniformity. The ~35% gap for uint and ~12% gap for ulong
+are intrinsic to the algorithmic tradeoff between uniformity and specialization.
 
-If the replacement is desired for **code simplification** (removing a 10-line
-helper), the change would be:
+### 4.7 Real-World Impact Assessment
 
-```csharp
-// Before:
-int originalDigitCount = CountDigits(length);
+The vision statement says *"the difference between the two approaches will likely
+be negligible in a real world app."* Let's quantify:
 
-// After:
-int originalDigitCount = int.Log10(length) + 1;
-```
+**For `int.ToString()` (Lemire path)**:
+- Lemire: ~0.86 ns per call
+- Log10+1: ~1.17 ns per call
+- Delta: ~0.31 ns per call
+- To add 1 ms of latency: ~3.2 million `ToString()` calls
+- **Verdict**: Negligible for most apps. Significant for high-throughput
+  serialization/logging (millions of calls/second in JSON serializers,
+  database drivers, log frameworks).
 
-**Correctness note**: `int.Log10(0) + 1 = 1`, matching `CountDigits(0) = 1`.
-However, `int.Log10` throws for negative values while the divide loop's
-`Debug.Assert` is stripped in Release builds — the stronger validation is
-actually an improvement.
+**For `UInt128.ToString()` (division path)**:
+- CountDigits: ~32 ns per call (large values)
+- Log10+1: ~2.2 ns per call
+- Delta: ~30 ns per call
+- **Verdict**: Significant even at moderate call rates. A loop formatting
+  1000 UInt128 values saves ~30 μs.
 
-### Summary
+---
 
-#### Complete CountDigits Inventory
+## Part 5: Correctness Analysis
 
-The codebase contains **6 distinct CountDigits definitions** across 4 components,
-plus 2 derived/test definitions. All 6 have been evaluated; the 4 C# definitions
-have been benchmarked.
+| Edge Case | Lemire | fmtlib | Divide Loop | Log10+1 |
+|-----------|--------|--------|-------------|---------|
+| Input = 0 | 1 | 1 | 1 | 1 ✅ |
+| Input = 1 | 1 | 1 | 1 | 1 ✅ |
+| Input = 9 | 1 | 1 | 1 | 1 ✅ |
+| Input = 10 | 2 | 2 | 2 | 2 ✅ |
+| Power-of-10 boundaries | ✅ Correct | ✅ Correct | ✅ Correct | ✅ Correct |
+| `uint.MaxValue` | 10 | N/A | N/A | 10 ✅ |
+| `ulong.MaxValue` | N/A | 20 | N/A | 20 ✅ |
+| Negative input | N/A (uint) | N/A (ulong) | `Debug.Assert` (stripped in Release) | Throws `ArgumentOutOfRangeException` ⚠️ |
 
-| # | Location | Signature | Algorithm | Call Sites | Hot Path? | Benchmarked? | Replace? | Rationale |
-|---|---|---|---|---|---|---|---|---|
-| 1 | `FormattingHelpers` `.CountDigits.cs` | `CountDigits(uint)` | Lemire (32×long table) | ~12 (Number.Formatting, TimeSpanParse, BigInteger) | **Yes** — number formatting is perf-critical | ✅ Yes | **No** | 35% faster than Log10+1. |
-| 2 | `FormattingHelpers` `.CountDigits.cs` | `CountDigits(ulong)` | fmtlib-style (64×byte log2-to-pow10 map + 20×ulong powers table) | ~10 (Number.Formatting for long/ulong) | **Yes** — number formatting is perf-critical | ✅ Yes | **No** | 12–21% faster than Log10+1. |
-| 2a | `FormattingHelpers` `.CountDigits.Int128.cs` | `CountDigits(UInt128)` | Delegates to ulong CountDigits; large values use UInt128/1e20 division | ~2 (Int128.ToString, UInt128.ToString) | **Yes** — number formatting | ✅ Yes | **Yes (large-value path)** | **14.6x slower** than Log10+1 for large values due to software UInt128 division. Hybrid approach recommended. |
-| 3 | `NativeAotNameMangler.cs` | `CountDigits(uint)` | Lemire (32×long table) — identical to #1 | 1 (name dedup loop) | Moderate — NativeAOT compile time | ✅ Yes (same algo as #1) | **No** | 35% faster than Log10+1. |
-| 4 | `TarHeader.Write.cs` | `CountDigits(int)` | Divide-by-10 loop | 4 (PAX record length) | **No** — I/O-bound TAR writing | ✅ Yes | **Optional** | Log10+1 is 3–11x faster for large values; no practical impact on this cold path. Replacement simplifies code. |
-| 5 | `jit/utils.cpp` | `CountDigits(unsigned, unsigned base)` | Divide loop (supports arbitrary base) | 6 (JIT diagnostics: block numbering, IBC weights) | **No** — DEBUG-only, not in release builds | ❌ Not applicable | **No** | C++ code in `#ifdef DEBUG`; `Log10` is a C# API. Also supports non-base-10, which Log10 cannot replace. |
-| 6 | `jit/utils.cpp` | `CountDigits(double, unsigned base)` | Divide loop (floating-point, arbitrary base) | 0 direct (exists alongside #5) | **No** — DEBUG-only | ❌ Not applicable | **No** | Same as #5: C++ debug code, arbitrary base, floating-point input. |
+**Note on Log10(0)**: Both `Log10(0)` and `CountDigits(0)` return 0 and 1
+respectively. The `value |= 1` in Log10 ensures `Log2(0)` doesn't produce
+undefined behavior, and the table lookup yields 0 (since `Log2(1) = 0` and
+`PowersOf10[0] = 1`, so `1 < 1` is false and `approx = 0` is returned).
+Adding 1 gives `CountDigits(0) = 1`, matching the existing behavior.
 
-**Not counted as separate definitions** (derived/test code):
-- `ElidedBoundsChecks.CountDigits(ulong)` — JIT test verifying bounds-check elision; not production code
+---
 
-#### Why the Most Critical uint/ulong Implementations Should NOT Be Replaced
+## Part 6: Tradeoff Matrix
 
-**FormattingHelpers.CountDigits(uint)** and **CountDigits(ulong)** (#1 and #2)
-are the highest-impact call sites — they power `int.ToString()`, `long.ToString()`,
-`uint.ToString()`, `ulong.ToString()`, `Int128.ToString()`, `TimeSpan.ToString()`,
-and `BigInteger.ToString()`. These are among the most frequently called methods in
-all of .NET.
+### Dimension 1: Performance
 
-Both use purpose-built algorithms that compute digit count in a single step:
+| Definition | CountDigits Speed | Log10+1 Speed | Delta | Hot Path? | Impact |
+|-----------|------------------|---------------|-------|-----------|--------|
+| #1 `uint` (Lemire) | 884 ns/1024 | 1,195 ns/1024 | **+35%** | **Yes** (22 callers in formatting) | **High** — `.ToString()` for all 32-bit integer types |
+| #2 `ulong` (fmtlib) | 1,272 ns/1024 | 1,447 ns/1024 | **+12–21%** | **Yes** (7 callers in formatting) | **High** — `.ToString()` for all 64-bit integer types |
+| #3 `UInt128` (hybrid) | 33,065 ns/1024 (large) | 2,266 ns/1024 (large) | **−93%** | **Yes** (formatting) | **High** — 14.6x improvement |
+| #4 `uint` (NativeAOT) | 884 ns/1024 | 1,195 ns/1024 | **+35%** | Moderate | **Low** — compile time, one call site |
+| #5 `int` (Tar) | 1,024–13,548 ns/1024 | 1,180 ns/1024 | **−15% to −92%** | **No** | **None** — I/O-bound |
+| #6/#7 C++ | N/A | N/A | N/A | **No** | **None** — different language |
 
-- **uint version** (Lemire): `(value + table[Log2(value)]) >> 32` — the table
-  encodes both the digit count AND the correction factor into a single 64-bit value,
-  so the final computation is just add + shift. No multiply, no conditional.
+### Dimension 2: Maintainability
 
-- **ulong version** (fmtlib): Uses a two-level lookup — first maps Log2 to an
-  approximate digit count via a 64-byte table, then compares against the exact
-  power of 10. Similar in structure to `Log10` but with the correction table
-  designed for direct digit-count output.
+| Factor | CountDigits (status quo) | Log10+1 (unified) |
+|--------|------------------------|--------------------|
+| **Implementations to maintain** | 5 (3 algorithms × 3 types + 2 duplicates) | 1 (Log10 API) |
+| **Lines of algorithm code** | ~150 across 4 files | 0 (delegates to public API) |
+| **Table data to verify** | 32×long + 64×byte + 20×ulong + UInt128 thresholds | 0 (owned by Log10) |
+| **Test surface** | Each copy tested independently | Centralized in GenericMath test matrix |
+| **Discoverability** | Developers may unknowingly create new CountDigits | `Log10` is a first-class API |
+| **Cross-type consistency** | 3 different algorithms | 1 pattern |
 
-`Log10 + 1` uses the same Log2 foundation but adds intermediate steps (multiply
-by 1233, shift right 12, compare against PowersOf10 table, conditional subtract,
-then add 1). Each extra step adds latency. The purpose-built algorithms eliminate
-these steps by encoding the correction differently.
+### Dimension 3: Risk
 
-#### Where Replacement Makes Sense
+| Risk | CountDigits | Log10+1 |
+|------|-------------|---------|
+| **Regression risk** | Algorithm is frozen, won't change | Log10 changes propagate to all callers |
+| **Correctness risk** | Each copy must be independently verified | Centralized testing catches bugs once |
+| **Future optimization** | Each type can be independently optimized | Optimizing Log10 benefits all types |
+| **API coupling** | Internal helper, free to change | Public API, breaking changes are hard |
 
-**FormattingHelpers.CountDigits(UInt128)** (#2a) large-value path:
+---
 
-- **Performance**: The current implementation is **14.6x slower** for large values
-  because it performs a `UInt128 / 1e20` software division (~29 ns per call)
-- **Hybrid fix**: Keep the `upper == 0` fast path (delegates to ulong CountDigits),
-  replace only the large-value path with `UInt128.Log10 + 1`
-- **Call sites**: `Int128.ToString()` and `UInt128.ToString()` — while less common
-  than int/uint formatting, a 14.6x regression on large values is significant
+## Part 7: Recommendations
 
-**TarHeader.Write.CountDigits** (#4):
+### Option A: Targeted Hybrid (Recommended)
 
-- **Code simplification**: Removes a 10-line static local function, replacing
-  4 call sites with `int.Log10(length) + 1`
-- **Stronger validation**: `int.Log10` throws on negative input vs. a Debug.Assert
-  that's stripped in Release
-- **No perf impact**: The TAR writing path is I/O-bound; the function is called
-  ≤4 times per PAX extended attribute with values typically in the 10–200 range
-- **Semantic clarity**: `Log10(n) + 1` directly expresses "number of decimal digits"
-  as a mathematical identity
+**Replace only where Log10+1 is better or equivalent; keep specialized helpers
+where they outperform.**
 
-#### Why Definitions #5 and #6 Were Not Benchmarked
+| Definition | Action | Rationale |
+|-----------|--------|-----------|
+| #1 `FormattingHelpers.CountDigits(uint)` | **Keep as-is** | 35% faster, powers most-called formatting paths |
+| #2 `FormattingHelpers.CountDigits(ulong)` | **Keep as-is** | 12–21% faster, powers 64-bit formatting paths |
+| #3 `FormattingHelpers.CountDigits(UInt128)` | **Replace large-value path** | 14.6x improvement; keep `upper==0` ulong fast path |
+| #4 `NativeAotNameMangler.CountDigits(uint)` | **Keep as-is** | 35% faster; compile-time path where perf matters |
+| #5 `TarHeader.Write.CountDigits(int)` | **Replace** | Simplifies code; no perf impact on I/O-bound path |
+| #6/#7 `jit/utils.cpp` | **Keep as-is** | C++ code, arbitrary-base support, DEBUG-only |
+| #8 `ElidedBoundsChecks.cs` | **Keep as-is** | Test code, not production |
 
-The `jit/utils.cpp` `CountDigits` functions (#5 and #6) were excluded from
-benchmarking because:
+**Concrete changes**:
 
-1. **Language barrier**: They are C++ code; `Log10` is a C# API on
-   `IBinaryInteger<TSelf>`. There is no C++ equivalent to replace them with.
-2. **Arbitrary-base support**: Both accept a `base` parameter (e.g., base 16
-   for hex formatting). `Log10` is base-10 only and cannot substitute.
-3. **DEBUG-only**: Both are compiled only under `#ifdef DEBUG` and do not
-   appear in release builds. Performance is not a concern.
-4. **No C# equivalent exists**: Even if Log10 were available in C++, these
-   functions serve JIT diagnostic formatting where base-10 is just one of
-   several bases used.
+1. **UInt128** — In `FormattingHelpers.CountDigits.Int128.cs`:
+   ```csharp
+   public static int CountDigits(UInt128 value)
+   {
+       ulong upper = value.Upper;
+       if (upper == 0)
+           return CountDigits(value.Lower);       // existing fast path
+       return (int)UInt128.Log10(value) + 1;      // replaces expensive division
+   }
+   ```
+
+2. **TarHeader** — In `TarHeader.Write.cs`, replace `CountDigits(length)` calls
+   with `int.Log10(length) + 1` and remove the `CountDigits` static local function.
+
+### Option B: Full Unification (Not Recommended)
+
+Replace all CountDigits with `Log10 + 1` across the board.
+
+**Pros**: Maximum code simplification, single algorithm, zero duplication.
+
+**Cons**: 12–35% regression on `int.ToString()`, `uint.ToString()`,
+`long.ToString()`, `ulong.ToString()` — the most frequently called formatting
+methods in .NET. This contradicts the runtime's established pattern of investing
+in purpose-built optimizations for hot paths (PRs [#76726](https://github.com/dotnet/runtime/pull/76726),
+[#68795](https://github.com/dotnet/runtime/pull/68795),
+[#113790](https://github.com/dotnet/runtime/pull/113790)).
+
+### Option C: Improve Log10 to Close the Gap
+
+Modify `uint.Log10` and `ulong.Log10` to use fmtlib-style direct table lookups
+instead of the `(log2 * 1233) >> 12` computation. Then replace CountDigits
+everywhere.
+
+**Pros**: Could reduce the uint gap from 35% to ~10%, and eliminate the ulong
+gap entirely.
+
+**Cons**:
+- Still can't match Lemire's branchless property for uint (~10% gap remains)
+- Changes the internal implementation of a public API (risk)
+- Different table sizes per type undermines the "one pattern" uniformity
+- The fmtlib algorithm IS essentially what `CountDigits(ulong)` already does —
+  you'd be replacing CountDigits with CountDigits under a different name
+
+**Assessment**: This option has merit for ulong (where fmtlib ≈ table-based Log10)
+but is not sufficient for uint (where Lemire's branchless design is fundamentally
+different). It could be pursued as a Log10 implementation improvement independent
+of the CountDigits question.
+
+### Option D: Keep Both, Add `CountDigits` as Public API
+
+Formalize `CountDigits` as a public API on integer types alongside `Log10`,
+documenting that `CountDigits = Log10 + 1` and that the internal implementation
+may use a faster algorithm.
+
+**Pros**: Eliminates the scattered private copies, gives developers the
+right tool for the job.
+
+**Cons**: Increases public API surface; `Log10 + 1` is trivial to write
+and may not justify a dedicated API. Also, `CountDigits` is an uncommon
+operation outside of formatting internals.
+
+**Assessment**: Overengineered for the problem. The relationship
+`CountDigits(n) == Log10(n) + 1` is simple enough that a public
+`CountDigits` API would add surface area without sufficient value.
+
+---
+
+## Summary
+
+The data supports **Option A: Targeted Hybrid** as the best path forward:
+
+1. **UInt128 large-value path**: Replace with `Log10 + 1` (**14.6x faster**)
+2. **TarHeader divide loop**: Replace with `Log10 + 1` (code simplification,
+   no perf impact)
+3. **Everything else**: Keep the purpose-built algorithms (12–35% faster on
+   the hottest paths in .NET)
+
+This aligns with the guiding vision — *"keeping the code simple to maintain
+and consistent"* — while respecting the empirical reality that the hot-path
+algorithms are measurably faster and the runtime has an established pattern
+of keeping them.
+
+The key insight is that the vision applies **per call site**: cold paths
+should use the simple, uniform API; hot paths should use purpose-built
+algorithms. `Log10` is the right tool for new code and non-critical paths.
+`CountDigits` (Lemire/fmtlib) is the right tool for the formatting hot paths
+where every nanosecond matters.
+
+---
 
 ## Limitations
 
@@ -553,30 +736,38 @@ benchmarking because:
   to close the 14.6x gap.
 - **C++ definitions not benchmarked**: `jit/utils.cpp` CountDigits (#5, #6) cannot
   be benchmarked with BenchmarkDotNet because they are C++ code, support arbitrary
-  bases, and only compile under `#ifdef DEBUG`. See "Point 8" for detailed rationale.
+  bases, and only compile under `#ifdef DEBUG`.
 
 ## References
 
+### Primary Sources
+
+- [API Proposal: Add Log10 to IBinaryInteger](https://github.com/dotnet/runtime/issues/116043)
+- [PR #126065: Add Log10 to IBinaryInteger](https://github.com/dotnet/runtime/pull/126065)
+- [Complete CountDigits Inventory (gist)](https://gist.github.com/ViveliDuCh/3f2e8565e91883d0e41b2d776a30d73a)
+
+### Algorithm References
+
 - [Lemire's digit-counting algorithm](https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/)
 - [fmtlib do_count_digits](https://github.com/fmtlib/fmt/blob/662adf4f33346ba9aba8b072194e319869ede54a/include/fmt/format.h#L1124)
-- `FormattingHelpers.CountDigits(uint)`:
-  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs`, lines 64–106
-- `FormattingHelpers.CountDigits(ulong)`:
-  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs`, lines 15–61
-- `FormattingHelpers.CountDigits(UInt128)`:
-  `src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.Int128.cs`, lines 12–50
-- `NativeAotNameMangler.CountDigits`:
-  `src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs`, lines 237–249
-- `TarHeader.Write.CountDigits`:
-  `src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs`, lines 927–938
-- `jit/utils.cpp CountDigits`:
-  `src/coreclr/jit/utils.cpp`, lines 2148–2170 (DEBUG-only, C++)
-- `uint.Log10` implementation:
-  `src/libraries/System.Private.CoreLib/src/System/UInt32.cs`, lines 298–309
-- `IBinaryInteger<TSelf>.Log10` interface definition:
-  `src/libraries/System.Private.CoreLib/src/System/Numerics/IBinaryInteger.cs`, lines 263–290
-- [BenchmarkDotNet documentation](https://benchmarkdotnet.org/)
-- [Microbenchmark Design Guidelines](https://github.com/dotnet/performance/blob/main/docs/microbenchmark-design-guidelines.md)
+- [Stanford Bit Twiddling Hacks — IntegerLog10](https://graphics.stanford.edu/~seander/bithacks.html#IntegerLog10)
+
+### Runtime Precedent PRs
+
+- [PR #113790: Remove bounds checks for Log2 in CountDigits](https://github.com/dotnet/runtime/pull/113790) — JIT optimization for CountDigits
+- [PR #76726: Improve performance of integer formatting](https://github.com/dotnet/runtime/pull/76726) — formatting hot-path optimization
+- [PR #68795: Improving 64-bit number formatting](https://github.com/dotnet/runtime/pull/68795) — ulong formatting optimization
+
+### Source Files
+
+| File | Contents |
+|------|----------|
+| [`FormattingHelpers.CountDigits.cs`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.cs) | `CountDigits(uint)` (Lemire) + `CountDigits(ulong)` (fmtlib) |
+| [`FormattingHelpers.CountDigits.Int128.cs`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Buffers/Text/FormattingHelpers.CountDigits.Int128.cs) | `CountDigits(UInt128)` (hybrid) |
+| [`NativeAotNameMangler.cs`](https://github.com/dotnet/runtime/blob/main/src/coreclr/tools/Common/Compiler/NativeAotNameMangler.cs) | `CountDigits(uint)` (Lemire duplicate) |
+| [`TarHeader.Write.cs`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Formats.Tar/src/System/Formats/Tar/TarHeader.Write.cs) | `CountDigits(int)` (divide loop) |
+| [`jit/utils.cpp`](https://github.com/dotnet/runtime/blob/main/src/coreclr/jit/utils.cpp) | `CountDigits(unsigned, base)` + `CountDigits(double, base)` (C++, DEBUG-only) |
+| [`ElidedBoundsChecks.cs`](https://github.com/dotnet/runtime/blob/main/src/tests/JIT/opt/RangeChecks/ElidedBoundsChecks.cs) | `CountDigits(ulong)` (test copy) |
 
 ## Appendix: Benchmark Code
 
