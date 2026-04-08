@@ -7,11 +7,11 @@ using System.Threading.Tasks;
 namespace System.IO.Tests
 {
     /// <summary>
-    /// Conformance tests for ReadOnlyTextStream using the ReadOnlyMemory{char} overload.
+    /// Conformance tests for StringStream using the ReadOnlyMemory{char} overload.
     /// </summary>
-    public class ReadOnlyTextStreamConformanceTests_Memory : StandaloneStreamConformanceTests
+    public class StringStreamConformanceTests_Memory : StandaloneStreamConformanceTests
     {
-        protected override bool CanSeek => true;
+        protected override bool CanSeek => false;
         protected override bool CanSetLength => false;
         protected override bool NopFlushCompletesSynchronously => true;
 
@@ -19,7 +19,7 @@ namespace System.IO.Tests
         {
             if (initialData is null || initialData.Length == 0)
             {
-                return Task.FromResult<Stream?>(Stream.FromText(ReadOnlyMemory<char>.Empty, Encoding.UTF8));
+                return Task.FromResult<Stream?>(new StringStream(ReadOnlyMemory<char>.Empty, Encoding.UTF8));
             }
 
             string sourceString = Encoding.UTF8.GetString(initialData);
@@ -30,7 +30,7 @@ namespace System.IO.Tests
                 return Task.FromResult<Stream?>(null);
             }
 
-            return Task.FromResult<Stream?>(Stream.FromText(sourceString.AsMemory(), Encoding.UTF8));
+            return Task.FromResult<Stream?>(new StringStream(sourceString.AsMemory(), Encoding.UTF8));
         }
 
         protected override Task<Stream?> CreateWriteOnlyStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);
@@ -39,11 +39,11 @@ namespace System.IO.Tests
     }
 
     /// <summary>
-    /// Conformance tests for ReadOnlyTextStream using the string overload.
+    /// Conformance tests for StringStream using the string overload.
     /// </summary>
-    public class ReadOnlyTextStreamConformanceTests_String : StandaloneStreamConformanceTests
+    public class StringStreamConformanceTests_String : StandaloneStreamConformanceTests
     {
-        protected override bool CanSeek => true;
+        protected override bool CanSeek => false;
         protected override bool CanSetLength => false;
         protected override bool NopFlushCompletesSynchronously => true;
 
@@ -51,7 +51,7 @@ namespace System.IO.Tests
         {
             if (initialData is null || initialData.Length == 0)
             {
-                return Task.FromResult<Stream?>(Stream.FromText("", Encoding.UTF8));
+                return Task.FromResult<Stream?>(new StringStream("", Encoding.UTF8));
             }
 
             string sourceString = Encoding.UTF8.GetString(initialData);
@@ -62,7 +62,7 @@ namespace System.IO.Tests
                 return Task.FromResult<Stream?>(null);
             }
 
-            return Task.FromResult<Stream?>(Stream.FromText(sourceString, Encoding.UTF8));
+            return Task.FromResult<Stream?>(new StringStream(sourceString, Encoding.UTF8));
         }
 
         protected override Task<Stream?> CreateWriteOnlyStreamCore(byte[]? initialData) => Task.FromResult<Stream?>(null);

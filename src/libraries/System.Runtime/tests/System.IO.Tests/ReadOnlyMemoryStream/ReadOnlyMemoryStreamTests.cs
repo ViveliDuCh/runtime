@@ -9,13 +9,13 @@ namespace System.IO.Tests
     /// <summary>
     /// Additional specific tests for ReadOnlyMemoryStream beyond conformance tests.
     /// </summary>
-    public class MemoryByteStream_ReadOnlyMemoryTests
+    public class ReadOnlyMemoryStreamTests
     {
         [Fact]
         public void Constructor_DefaultParameters_CreatesPubliclyVisibleStream()
         {
             byte[] buffer = new byte[100];
-            Stream stream = Stream.FromReadOnlyData(new ReadOnlyMemory<byte>(buffer));
+            Stream stream = new ReadOnlyMemoryStream(new ReadOnlyMemory<byte>(buffer));
 
             Assert.True(stream.CanRead);
             Assert.False(stream.CanWrite);
@@ -29,7 +29,7 @@ namespace System.IO.Tests
         public void Constructor_EmptyMemory_CreatesZeroLengthStream()
         {
             ReadOnlyMemory<byte> emptyMemory = ReadOnlyMemory<byte>.Empty;
-            Stream stream = Stream.FromReadOnlyData(emptyMemory);
+            Stream stream = new ReadOnlyMemoryStream(emptyMemory);
 
             Assert.Equal(0, stream.Length);
             Assert.Equal(0, stream.Position);
@@ -42,7 +42,7 @@ namespace System.IO.Tests
         {
             byte[] buffer = { 1, 2, 3, 4, 5 };
             Memory<byte> memory = buffer;
-            Stream stream = Stream.FromReadOnlyData(memory);  // Implicit conversion
+            Stream stream = new ReadOnlyMemoryStream(memory);  // Implicit conversion
 
             Assert.Equal(5, stream.Length);
             Assert.True(stream.CanRead);
@@ -54,7 +54,7 @@ namespace System.IO.Tests
         {
             byte[] largeBuffer = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
             ReadOnlyMemory<byte> slice = largeBuffer.AsMemory(3, 4);  // [3, 4, 5, 6]
-            Stream stream = Stream.FromReadOnlyData(slice);
+            Stream stream = new ReadOnlyMemoryStream(slice);
 
             Assert.Equal(4, stream.Length);
 
@@ -69,7 +69,7 @@ namespace System.IO.Tests
         public void Position_AdvancesDuringRead()
         {
             byte[] buffer = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-            Stream stream = Stream.FromReadOnlyData(buffer);
+            Stream stream = new ReadOnlyMemoryStream(buffer);
             byte[] readBuffer = new byte[3];
 
             Assert.Equal(0, stream.Position);
@@ -87,7 +87,7 @@ namespace System.IO.Tests
         [Fact]
         public void Seek_FromCurrent_RelativeOffset()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[100]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[100]);
             stream.Position = 50;
 
             // Seek forward 10 bytes
@@ -102,7 +102,7 @@ namespace System.IO.Tests
         [Fact]
         public void Seek_InvalidOrigin_ThrowsArgumentException()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[100]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[100]);
 
             Assert.Throws<ArgumentException>(() => stream.Seek(0, (SeekOrigin)999));
         }
@@ -111,7 +111,7 @@ namespace System.IO.Tests
         public void Read_ReturnsCorrectData()
         {
             byte[] data = { 10, 20, 30, 40, 50 };
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
             byte[] buffer = new byte[3];
 
             int bytesRead = stream.Read(buffer, 0, 3);
@@ -125,7 +125,7 @@ namespace System.IO.Tests
         public void Read_LargerThanAvailable_ReturnsPartialData()
         {
             byte[] data = { 1, 2, 3 };
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
             byte[] buffer = new byte[10];
 
             int bytesRead = stream.Read(buffer, 0, 10);
@@ -138,7 +138,7 @@ namespace System.IO.Tests
         public void Read_AfterSeek_ReturnsCorrectData()
         {
             byte[] data = { 10, 20, 30, 40, 50 };
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
 
             stream.Seek(2, SeekOrigin.Begin);
             byte[] buffer = new byte[2];
@@ -153,7 +153,7 @@ namespace System.IO.Tests
         {
             byte[] originalData = { 1, 2, 3, 4, 5 };
             byte[] dataCopy = (byte[])originalData.Clone();
-            Stream stream = Stream.FromReadOnlyData(originalData);
+            Stream stream = new ReadOnlyMemoryStream(originalData);
 
             byte[] buffer = new byte[5];
             stream.Read(buffer, 0, 5);
@@ -165,7 +165,7 @@ namespace System.IO.Tests
         [Fact]
         public void Write_ThrowsNotSupportedException()
         {
-            Stream stream = Stream.FromReadOnlyData(new ReadOnlyMemory<byte>(new byte[10]));
+            Stream stream = new ReadOnlyMemoryStream(new ReadOnlyMemory<byte>(new byte[10]));
             byte[] data = { 1, 2, 3 };
 
             Assert.Throws<NotSupportedException>(() => stream.Write(data, 0, 3));
@@ -174,14 +174,14 @@ namespace System.IO.Tests
         [Fact]
         public void SetLength_ThrowsNotSupportedException()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[10]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[10]);
             Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
         }
 
         [Fact]
         public void Dispose_SetsCanPropertiesToFalse()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[10]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[10]);
 
             stream.Dispose();
 
@@ -194,7 +194,7 @@ namespace System.IO.Tests
         public void Operations_AfterDispose_ThrowObjectDisposedException()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromReadOnlyData(buffer);
+            Stream stream = new ReadOnlyMemoryStream(buffer);
             stream.Dispose();
 
             Assert.Throws<ObjectDisposedException>(() => stream.Read(new byte[5], 0, 5));
@@ -209,7 +209,7 @@ namespace System.IO.Tests
         [Fact]
         public void Dispose_MultipleCalls_DoesNotThrow()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[10]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[10]);
 
             stream.Dispose();
             stream.Dispose();  // Should not throw
@@ -219,7 +219,7 @@ namespace System.IO.Tests
         [Fact]
         public void Read_NullBuffer_ThrowsArgumentNullException()
         {
-            Stream stream = Stream.FromReadOnlyData(new byte[10]);
+            Stream stream = new ReadOnlyMemoryStream(new byte[10]);
 
             Assert.Throws<ArgumentNullException>(() => stream.Read(null!, 0, 5));
         }
@@ -227,7 +227,7 @@ namespace System.IO.Tests
         [Fact]
         public void EmptyBuffer_BehavesCorrectly()
         {
-            Stream stream = Stream.FromReadOnlyData(ReadOnlyMemory<byte>.Empty);
+            Stream stream = new ReadOnlyMemoryStream(ReadOnlyMemory<byte>.Empty);
 
             Assert.Equal(0, stream.Length);
             Assert.Equal(0, stream.Position);
@@ -249,7 +249,7 @@ namespace System.IO.Tests
         {
             byte[] data = new byte[20];
             for (int i = 0; i < 20; i++) data[i] = (byte)i;
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[5];
@@ -276,7 +276,7 @@ namespace System.IO.Tests
         {
             byte[] data = new byte[10];
             for (int i = 0; i < 10; i++) data[i] = (byte)i;
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[3];
@@ -298,7 +298,7 @@ namespace System.IO.Tests
         public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
         {
             byte[] data = { 10, 20, 30, 40, 50 };
-            Stream stream = Stream.FromReadOnlyData(data);
+            Stream stream = new ReadOnlyMemoryStream(data);
 
             byte[] arrayBuffer = new byte[3];
             Memory<byte> memory = arrayBuffer.AsMemory();

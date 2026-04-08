@@ -26,14 +26,14 @@ namespace System.Memory.Tests
             {
                 // Create empty sequence for null or empty data
                 var emptySequence = ReadOnlySequence<byte>.Empty;
-                return Task.FromResult<Stream?>(Stream.FromReadOnlyData(emptySequence));
+                return Task.FromResult<Stream?>(new ReadOnlySequenceStream(emptySequence));
             }
 
             // ReadOnlySequence<byte> can be constructed from:
             // 1. ReadOnlyMemory<byte> (single segment)
             // 2. ReadOnlySequenceSegment<byte> chain (multi-segment)
             var sequence = new ReadOnlySequence<byte>(initialData); // Single segment
-            return Task.FromResult<Stream?>(Stream.FromReadOnlyData(sequence));
+            return Task.FromResult<Stream?>(new ReadOnlySequenceStream(sequence));
         }
 
         // Immutable

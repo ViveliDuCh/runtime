@@ -7,15 +7,15 @@ using Xunit;
 namespace System.IO.Tests
 {
     /// <summary>
-    /// Additional specific tests for MemoryByteStream beyond conformance tests.
+    /// Additional specific tests for WritableMemoryStream beyond conformance tests.
     /// </summary>
-    public class MemoryByteStreamTests
+    public class WritableMemoryStreamTests
     {
         [Fact]
         public void Constructor_EmptyMemory_CreatesZeroCapacityStream()
         {
             Memory<byte> emptyMemory = Memory<byte>.Empty;
-            Stream stream = Stream.FromWritableData(emptyMemory);
+            Stream stream = new WritableMemoryStream(emptyMemory);
 
             Assert.Equal(0, stream.Length);
             Assert.Equal(0, stream.Position);
@@ -28,16 +28,16 @@ namespace System.IO.Tests
         public void Write_BeyondCapacity_ThrowsNotSupportedException()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromWritableData(new Memory<byte>(buffer));
+            Stream stream = new WritableMemoryStream(new Memory<byte>(buffer));
 
             byte[] data = new byte[15];  // More than capacity
 
-            // Both MemoryStream (fixed capacity) and MemoryByteStream throw NotSupportedException
+            // Both MemoryStream (fixed capacity) and WritableMemoryStream throw NotSupportedException
             // when trying to expand beyond capacity, just with different messages
             var exception = Assert.Throws<NotSupportedException>(() =>
                 stream.Write(data, 0, data.Length));
 
-            // Accept either message format: MemoryByteStream's or MemoryStream's 'SR.NotSupported_MemStreamNotExpandable' message
+            // Accept either message format: WritableMemoryStream's or MemoryStream's 'SR.NotSupported_MemStreamNotExpandable' message
             Assert.True(
                 exception.Message.Contains("Cannot expand buffer") ||
                 exception.Message.Contains("not expandable"),
@@ -48,16 +48,16 @@ namespace System.IO.Tests
         public void WriteByte_BeyondCapacity_ThrowsNotSupportedException()
         {
             byte[] buffer = new byte[3];
-            Stream stream = Stream.FromWritableData(new Memory<byte>(buffer));
+            Stream stream = new WritableMemoryStream(new Memory<byte>(buffer));
 
             stream.WriteByte(1);
             stream.WriteByte(2);
             stream.WriteByte(3);
 
-            // Both MemoryStream (fixed capacity) and MemoryByteStream throw NotSupportedException
+            // Both MemoryStream (fixed capacity) and WritableMemoryStream throw NotSupportedException
             var exception = Assert.Throws<NotSupportedException>(() => stream.WriteByte(4));
 
-            // Accept either message format: MemoryByteStream's or MemoryStream's 'SR.NotSupported_MemStreamNotExpandable' message
+            // Accept either message format: WritableMemoryStream's or MemoryStream's 'SR.NotSupported_MemStreamNotExpandable' message
             Assert.True(
                 exception.Message.Contains("Cannot expand buffer") ||
                 exception.Message.Contains("not expandable"),
@@ -68,7 +68,7 @@ namespace System.IO.Tests
         public void Write_UpToExactCapacity_Succeeds()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromWritableData(new Memory<byte>(buffer));
+            Stream stream = new WritableMemoryStream(new Memory<byte>(buffer));
 
             byte[] data = new byte[10];  // Exactly capacity
             for (int i = 0; i < data.Length; i++) data[i] = (byte)i;
@@ -90,7 +90,7 @@ namespace System.IO.Tests
         public void Write_PartialFitAtEndOfCapacity_WritesAvailableSpace()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromWritableData(buffer);
+            Stream stream = new WritableMemoryStream(buffer);
 
             stream.Write(new byte[8], 0, 8);  // 8 bytes used, 2 remaining
             Assert.Equal(8, stream.Position);
@@ -109,7 +109,7 @@ namespace System.IO.Tests
         public void Seek_PastCapacity_Succeeds()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromWritableData(buffer);
+            Stream stream = new WritableMemoryStream(buffer);
 
             // Seek beyond capacity
             stream.Seek(100, SeekOrigin.Begin);
@@ -125,7 +125,7 @@ namespace System.IO.Tests
         public void Seek_FromEndNegativeOffset_PositionsCorrectly()
         {
             byte[] buffer = new byte[100];
-            Stream stream = Stream.FromWritableData(buffer);
+            Stream stream = new WritableMemoryStream(buffer);
 
             // Seek to 10 bytes before end
             long newPosition = stream.Seek(-10, SeekOrigin.End);
@@ -138,7 +138,7 @@ namespace System.IO.Tests
         public void ReadOnlyStream_WriteOperations_ThrowNotSupportedException()
         {
             byte[] buffer = new byte[100];
-            Stream stream = Stream.FromReadOnlyData(buffer);
+            Stream stream = new ReadOnlyMemoryStream(buffer);
 
             Assert.False(stream.CanWrite);
             Assert.Throws<NotSupportedException>(() => stream.Write(new byte[5], 0, 5));
@@ -149,7 +149,7 @@ namespace System.IO.Tests
         public void Write_OverExistingData_ReplacesData()
         {
             byte[] buffer = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-            Stream stream = Stream.FromWritableData(new Memory<byte>(buffer));
+            Stream stream = new WritableMemoryStream(new Memory<byte>(buffer));
 
             // Overwrite positions 3-5 with new data
             stream.Position = 3;
@@ -167,9 +167,9 @@ namespace System.IO.Tests
         public void Position_SetToIntMaxValue_Succeeds()
         {
             byte[] buffer = new byte[100];
-            Stream stream = Stream.FromWritableData(buffer);
+            Stream stream = new WritableMemoryStream(buffer);
 
-            // MemoryStream has MaxStreamLength (2147483591), MemoryByteStream allows int.MaxValue
+            // MemoryStream has MaxStreamLength (2147483591), WritableMemoryStream allows int.MaxValue
             if (stream is MemoryStream)
             {
                 // MemoryStream.MaxStreamLength = Array.MaxLength = 2147483591
@@ -178,7 +178,7 @@ namespace System.IO.Tests
             }
             else
             {
-                // MemoryByteStream should not throw even though it's way beyond capacity
+                // WritableMemoryStream should not throw even though it's way beyond capacity
                 stream.Position = int.MaxValue;
                 Assert.Equal(int.MaxValue, stream.Position);
             }
@@ -187,14 +187,14 @@ namespace System.IO.Tests
         [Fact]
         public void Position_SetNegative_ThrowsArgumentOutOfRangeException()
         {
-            Stream stream = Stream.FromWritableData(new byte[100]);
+            Stream stream = new WritableMemoryStream(new byte[100]);
             Assert.Throws<ArgumentOutOfRangeException>(() => stream.Position = -1);
         }
 
         [Fact]
         public void Position_SetBeyondLongMaxValue_ThrowsArgumentOutOfRangeException()
         {
-            Stream stream = Stream.FromWritableData(new byte[100]);
+            Stream stream = new WritableMemoryStream(new byte[100]);
 
             // Position property accepts long, but internally casts to int
             // Setting to value > int.MaxValue should throw
@@ -204,7 +204,7 @@ namespace System.IO.Tests
         [Fact]
         public void Dispose_SetsCanPropertiesToFalse()
         {
-            Stream stream = Stream.FromWritableData(new byte[10]);
+            Stream stream = new WritableMemoryStream(new byte[10]);
 
             stream.Dispose();
 
@@ -217,7 +217,7 @@ namespace System.IO.Tests
         public void Operations_AfterDispose_ThrowObjectDisposedException()
         {
             byte[] buffer = new byte[10];
-            Stream stream = Stream.FromWritableData(buffer);
+            Stream stream = new WritableMemoryStream(buffer);
             stream.Dispose();
 
             Assert.Throws<ObjectDisposedException>(() => stream.Read(new byte[5], 0, 5));
@@ -232,7 +232,7 @@ namespace System.IO.Tests
         [Fact]
         public void Write_ZeroBytes_Succeeds()
         {
-            Stream stream = Stream.FromWritableData(new byte[10]);
+            Stream stream = new WritableMemoryStream(new byte[10]);
 
             stream.Write(new byte[0], 0, 0);
 
@@ -243,7 +243,7 @@ namespace System.IO.Tests
         [Fact]
         public void Read_ZeroBytes_ReturnsZero()
         {
-            Stream stream = Stream.FromWritableData(new byte[10]);
+            Stream stream = new WritableMemoryStream(new byte[10]);
 
             int bytesRead = stream.Read(new byte[10], 0, 0);
 
@@ -254,7 +254,7 @@ namespace System.IO.Tests
         [Fact]
         public void SetLength_ThrowsNotSupportedException()
         {
-            Stream stream = Stream.FromWritableData(new byte[10]);
+            Stream stream = new WritableMemoryStream(new byte[10]);
 
             Assert.Throws<NotSupportedException>(() => stream.SetLength(20));
         }
@@ -264,7 +264,7 @@ namespace System.IO.Tests
         {
             byte[] data = new byte[20];
             for (int i = 0; i < 20; i++) data[i] = (byte)i;
-            Stream stream = Stream.FromWritableData(data);
+            Stream stream = new WritableMemoryStream(data);
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[5];
@@ -288,7 +288,7 @@ namespace System.IO.Tests
         {
             byte[] data = new byte[10];
             for (int i = 0; i < 10; i++) data[i] = (byte)i;
-            Stream stream = Stream.FromWritableData(data);
+            Stream stream = new WritableMemoryStream(data);
 
             byte[] buffer1 = new byte[5];
             byte[] buffer2 = new byte[3];
@@ -310,7 +310,7 @@ namespace System.IO.Tests
         public async Task ReadAsync_ArrayBackedMemory_UsesFastPath()
         {
             byte[] data = { 10, 20, 30, 40, 50 };
-            Stream stream = Stream.FromWritableData(data);
+            Stream stream = new WritableMemoryStream(data);
 
             byte[] arrayBuffer = new byte[3];
             Memory<byte> memory = arrayBuffer.AsMemory();

@@ -8,18 +8,18 @@ using Xunit;
 namespace System.IO.Tests
 {
     /// <summary>
-    /// Additional specific tests for ReadOnlyTextStream with ReadOnlyMemory{char} beyond conformance tests.
+    /// Additional specific tests for StringStream with ReadOnlyMemory{char} beyond conformance tests.
     /// </summary>
-    public class ReadOnlyTextStreamTests_Memory
+    public class StringStreamTests_Memory
     {
         [Fact]
         public void Constructor_DefaultEncoding_UsesUTF8()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             Assert.True(stream.CanRead);
-            Assert.True(stream.CanSeek);
+            Assert.False(stream.CanSeek);
             Assert.False(stream.CanWrite);
         }
 
@@ -27,7 +27,7 @@ namespace System.IO.Tests
         public void Constructor_ExplicitEncoding_UsesSpecifiedEncoding()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars, Encoding.UTF32);
+            var stream = new StringStream(chars, Encoding.UTF32);
 
             Assert.True(stream.CanRead);
         }
@@ -36,7 +36,7 @@ namespace System.IO.Tests
         public void Constructor_EmptyMemory_CreatesValidStream()
         {
             var emptyMemory = ReadOnlyMemory<char>.Empty;
-            var stream = Stream.FromText(emptyMemory);
+            var stream = new StringStream(emptyMemory, Encoding.UTF8);
 
             Assert.True(stream.CanRead);
 
@@ -57,7 +57,7 @@ namespace System.IO.Tests
             {
                 byte[] expectedBytes = encoding.GetBytes(input);
                 var chars = input.AsMemory();
-                var stream = Stream.FromText(chars, encoding);
+                var stream = new StringStream(chars, encoding);
 
                 byte[] actualBytes = new byte[expectedBytes.Length * 2];
                 int totalRead = 0;
@@ -81,7 +81,7 @@ namespace System.IO.Tests
             var slice = fullMemory.Slice(5, 10);
 
             byte[] expectedBytes = Encoding.UTF8.GetBytes("56789ABCDE");
-            var stream = Stream.FromText(slice, Encoding.UTF8);
+            var stream = new StringStream(slice, Encoding.UTF8);
 
             byte[] actualBytes = new byte[expectedBytes.Length + 10];
             int totalRead = 0;
@@ -103,7 +103,7 @@ namespace System.IO.Tests
             var memory = new ReadOnlyMemory<char>(charArray);
 
             byte[] expectedBytes = Encoding.UTF8.GetBytes("Hello");
-            var stream = Stream.FromText(memory, Encoding.UTF8);
+            var stream = new StringStream(memory, Encoding.UTF8);
 
             byte[] actualBytes = new byte[expectedBytes.Length + 10];
             int totalRead = 0;
@@ -126,9 +126,9 @@ namespace System.IO.Tests
             var slice2 = source.AsMemory(5, 5);
             var slice3 = source.AsMemory(10, 6);
 
-            var stream1 = Stream.FromText(slice1, Encoding.UTF8);
-            var stream2 = Stream.FromText(slice2, Encoding.UTF8);
-            var stream3 = Stream.FromText(slice3, Encoding.UTF8);
+            var stream1 = new StringStream(slice1, Encoding.UTF8);
+            var stream2 = new StringStream(slice2, Encoding.UTF8);
+            var stream3 = new StringStream(slice3, Encoding.UTF8);
 
             byte[] result1 = new byte[10];
             byte[] result2 = new byte[10];
@@ -149,7 +149,7 @@ namespace System.IO.Tests
             string input = "😀😁😂🤣😃😄";
             var chars = input.AsMemory();
             byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-            var stream = Stream.FromText(chars, Encoding.UTF8);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             byte[] actualBytes = new byte[expectedBytes.Length];
             int totalRead = 0;
@@ -170,7 +170,7 @@ namespace System.IO.Tests
             string input = new string('A', 1023) + "你";
             var chars = input.AsMemory();
             byte[] expectedBytes = Encoding.UTF8.GetBytes(input);
-            var stream = Stream.FromText(chars, Encoding.UTF8);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             byte[] actualBytes = new byte[expectedBytes.Length];
             int totalRead = 0;
@@ -186,46 +186,46 @@ namespace System.IO.Tests
         }
 
         [Fact]
-        public void LengthSupported()
+        public void LengthThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
-            Assert.Equal((long)Encoding.UTF8.GetByteCount(chars.Span), stream.Length);
+            Assert.Throws<NotSupportedException>(() => stream.Length);
         }
 
         [Fact]
-        public void PositionGetSupported()
+        public void PositionGetThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
-            Assert.Equal(0, stream.Position);
+            Assert.Throws<NotSupportedException>(() => stream.Position);
         }
 
         [Fact]
-        public void PositionSetSupported()
+        public void PositionSetThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
-            stream.Position = 0;
-            Assert.Equal(0, stream.Position);
+            var stream = new StringStream(chars, Encoding.UTF8);
+
+            Assert.Throws<NotSupportedException>(() => stream.Position = 0);
         }
 
         [Fact]
-        public void SeekSupported()
+        public void SeekThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
-            Assert.Equal(0, stream.Seek(0, SeekOrigin.Begin));
+            Assert.Throws<NotSupportedException>(() => stream.Seek(0, SeekOrigin.Begin));
         }
 
         [Fact]
         public void WriteThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             Assert.Throws<NotSupportedException>(() => stream.Write(new byte[1], 0, 1));
         }
@@ -234,7 +234,7 @@ namespace System.IO.Tests
         public void SetLengthThrowsNotSupportedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             Assert.Throws<NotSupportedException>(() => stream.SetLength(100));
         }
@@ -243,7 +243,7 @@ namespace System.IO.Tests
         public void CanReadFalseAfterDispose()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             stream.Dispose();
 
@@ -254,7 +254,7 @@ namespace System.IO.Tests
         public void ReadAfterDispose_ThrowsObjectDisposedException()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
             stream.Dispose();
 
             byte[] buffer = new byte[10];
@@ -265,7 +265,7 @@ namespace System.IO.Tests
         public void MultipleDispose_DoesNotThrow()
         {
             var chars = "test".AsMemory();
-            var stream = Stream.FromText(chars);
+            var stream = new StringStream(chars, Encoding.UTF8);
 
             stream.Dispose();
             stream.Dispose();
@@ -278,8 +278,8 @@ namespace System.IO.Tests
         [InlineData("Emoji: 😀")]
         public async Task ProducesSameOutputAsStringOverload(string input)
         {
-            var memoryStream = Stream.FromText(input.AsMemory(), Encoding.UTF8);
-            var stringStream = Stream.FromText(input, Encoding.UTF8);
+            var memoryStream = new StringStream(input.AsMemory(), Encoding.UTF8);
+            var stringStream = new StringStream(input, Encoding.UTF8);
 
             byte[] memoryResult = new byte[1000];
             byte[] stringResult = new byte[1000];

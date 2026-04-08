@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -1312,60 +1311,6 @@ namespace System.IO
                     _stream.EndWrite(asyncResult);
                 }
             }
-        }
-
-        /// <summary>
-        /// Creates a read-only, seekable stream that encodes the specified string on-the-fly.
-        /// </summary>
-        /// <param name="text">The string to wrap as a stream.</param>
-        /// <param name="encoding">The encoding to use. Defaults to <see cref="Encoding.UTF8"/> if <see langword="null"/>.</param>
-        /// <returns>A read-only stream over the encoded text.</returns>
-        /// <exception cref="ArgumentNullException"><paramref name="text"/> is <see langword="null"/>.</exception>
-        public static Stream FromText(string text, Encoding? encoding = null)
-        {
-            ArgumentNullException.ThrowIfNull(text);
-            return new ReadOnlyTextStream(text, encoding ?? Encoding.UTF8);
-        }
-
-        /// <summary>
-        /// Creates a read-only, seekable stream that encodes the specified character memory on-the-fly.
-        /// </summary>
-        /// <param name="text">The character memory to wrap as a stream.</param>
-        /// <param name="encoding">The encoding to use. Defaults to <see cref="Encoding.UTF8"/> if <see langword="null"/>.</param>
-        /// <returns>A read-only stream over the encoded text.</returns>
-        public static Stream FromText(ReadOnlyMemory<char> text, Encoding? encoding = null) =>
-            new ReadOnlyTextStream(text, encoding ?? Encoding.UTF8);
-
-        /// <summary>
-        /// Creates a read-only, seekable stream over the specified byte memory.
-        /// </summary>
-        /// <param name="data">The byte memory to wrap as a stream.</param>
-        /// <returns>A read-only stream over the data.</returns>
-        public static Stream FromReadOnlyData(ReadOnlyMemory<byte> data)
-        {
-            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
-            {
-                // Fast path:  ReadOnlyMemory<byte> wraps an array
-                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count, writable: false);
-            }
-
-            return new MemoryByteStream(data);
-        }
-
-        /// <summary>
-        /// Creates a writable, seekable stream over the specified byte memory.
-        /// </summary>
-        /// <param name="data">The byte memory to wrap as a stream.</param>
-        /// <returns>A writable stream over the data. The stream cannot expand beyond the initial memory capacity.</returns>
-        public static Stream FromWritableData(Memory<byte> data)
-        {
-            if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> dataBacking))
-            {
-                // Fast path:  Memory<byte> wraps an array
-                return new MemoryStream(dataBacking.Array!, dataBacking.Offset, dataBacking.Count);
-            }
-
-            return new MemoryByteStream(data);
         }
     }
 }

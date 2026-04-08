@@ -15,7 +15,7 @@ namespace System.Buffers
     /// Seeking beyond the end of the stream is supported; subsequent reads will return zero bytes.
     /// </remarks>
     // Seekable Stream from ReadOnlySequence<byte>
-    internal sealed class ReadOnlySequenceStream : Stream
+    public sealed class ReadOnlySequenceStream : Stream
     {
         private ReadOnlySequence<byte> _sequence;
         private SequencePosition _position;
