@@ -104,7 +104,8 @@ namespace Microsoft.Extensions.Options.Generators
 
                             var membersToValidate = GetMembersToValidate(modelType, true, lowerLocationInCompilation, validatorType);
                             bool selfValidate = ModelSelfValidates(modelType);
-                            if (membersToValidate.Count == 0 && !selfValidate)
+                            bool selfValidateAsync = ModelSelfValidatesAsync(modelType);
+                            if (membersToValidate.Count == 0 && !selfValidate && !selfValidateAsync)
                             {
                                 // this type lacks any eligible members
                                 Diag(DiagDescriptors.NoEligibleMembersFromValidator, syntax.GetLocation(), modelType.ToString(), validatorType.ToString());
@@ -115,6 +116,7 @@ namespace Microsoft.Extensions.Options.Generators
                                 GetFQN(modelType),
                                 modelType.Name,
                                 selfValidate,
+                                selfValidateAsync,
                                 membersToValidate));
                         }
 
@@ -133,6 +135,20 @@ namespace Microsoft.Extensions.Options.Generators
 
                         parents.Reverse();
 
+                        // Check if the user's validator type implements IAsyncValidateOptions<T>
+                        bool hasAsyncInterface = false;
+                        if (_symbolHolder.AsyncValidateOptionsSymbol is not null)
+                        {
+                            foreach (var iface in validatorType.AllInterfaces)
+                            {
+                                if (SymbolEqualityComparer.Default.Equals(iface.OriginalDefinition, _symbolHolder.AsyncValidateOptionsSymbol))
+                                {
+                                    hasAsyncInterface = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         results.Add(new ValidatorType(
                             validatorType.ContainingNamespace.IsGlobalNamespace ? string.Empty : validatorType.ContainingNamespace.ToString()!,
                             GetMinimalFQN(validatorType),
@@ -140,7 +156,8 @@ namespace Microsoft.Extensions.Options.Generators
                             keyword,
                             parents,
                             false,
-                            modelsValidatorTypeValidates));
+                            modelsValidatorTypeValidates,
+                            hasAsyncInterface));
                     }
                 }
             }
@@ -696,8 +713,9 @@ namespace Microsoft.Extensions.Options.Generators
             }
 
             bool selfValidate = ModelSelfValidates(mt);
+            bool selfValidateAsync = ModelSelfValidatesAsync(mt);
             var membersToValidate = GetMembersToValidate(mt, true, location, validatorType);
-            if (membersToValidate.Count == 0 && !selfValidate)
+            if (membersToValidate.Count == 0 && !selfValidate && !selfValidateAsync)
             {
                 // this type lacks any eligible members
                 Diag(DiagDescriptors.NoEligibleMember, location, mt.ToString(), member.ToString());
@@ -708,6 +726,7 @@ namespace Microsoft.Extensions.Options.Generators
                 GetFQN(mt),
                 mt.Name,
                 selfValidate,
+                selfValidateAsync,
                 membersToValidate);
 
             var validatorTypeName = "__" + mt.Name + "Validator__";
@@ -736,6 +755,24 @@ namespace Microsoft.Extensions.Options.Generators
             foreach (var implementingInterface in modelType.AllInterfaces)
             {
                 if (SymbolEqualityComparer.Default.Equals(implementingInterface.OriginalDefinition, _symbolHolder.IValidatableObjectSymbol))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool ModelSelfValidatesAsync(ITypeSymbol modelType)
+        {
+            if (_symbolHolder.IAsyncValidatableObjectSymbol is null)
+            {
+                return false;
+            }
+
+            foreach (var implementingInterface in modelType.AllInterfaces)
+            {
+                if (SymbolEqualityComparer.Default.Equals(implementingInterface.OriginalDefinition, _symbolHolder.IAsyncValidatableObjectSymbol))
                 {
                     return true;
                 }

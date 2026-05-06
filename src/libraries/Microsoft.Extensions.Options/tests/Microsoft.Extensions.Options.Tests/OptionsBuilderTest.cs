@@ -901,5 +901,91 @@ namespace Microsoft.Extensions.Options.Tests
             var unvalidated = monitor.Get("unvalidated");
             Assert.NotNull(unvalidated);
         }
+
+#if NET11_0_OR_GREATER
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateDataAnnotationsAsync()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<AnnotatedOptions>()
+                .Configure(o =>
+                {
+                    o.StringLength = "111111";
+                    o.IntRange = 10;
+                    o.Custom = "nowhere";
+                    o.Dep1 = "Not dep2";
+                })
+                .ValidateDataAnnotationsAsync()
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            var error = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            ValidateFailure<AnnotatedOptions>(error, Options.DefaultName, 5,
+                "DataAnnotation validation failed for 'AnnotatedOptions' members: 'Required' with the error: 'The Required field is required.'.",
+                "DataAnnotation validation failed for 'AnnotatedOptions' members: 'StringLength' with the error: 'Too long.'.",
+                "DataAnnotation validation failed for 'AnnotatedOptions' members: 'IntRange' with the error: 'Out of range.'.",
+                "DataAnnotation validation failed for 'AnnotatedOptions' members: 'Custom' with the error: 'The field Custom is invalid.'.",
+                "DataAnnotation validation failed for 'AnnotatedOptions' members: 'Dep1,Dep2' with the error: 'Dep1 != Dep2'.");
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task DataAnnotationValidateOptionsAsync_AllValid_Succeeds()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<AnnotatedOptions>()
+                .Configure(o =>
+                {
+                    o.Required = "present";
+                    o.StringLength = "ok";
+                    o.IntRange = 3;
+                    o.Custom = "USA";
+                    o.Dep1 = "same";
+                    o.Dep2 = "same";
+                })
+                .ValidateDataAnnotationsAsync()
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            await validator.ValidateAsync();
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task DataAnnotationValidateOptionsAsync_NamedOptions_Skips()
+        {
+            var validator = new DataAnnotationValidateOptionsAsync<AnnotatedOptions>("Name1");
+            var options = new AnnotatedOptions
+            {
+                StringLength = "111111",
+                IntRange = 10,
+                Custom = "nowhere",
+                Dep1 = "Not dep2",
+            };
+
+            var result = await validator.ValidateAsync("OtherName", options);
+            Assert.True(result.Skipped);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task DataAnnotationValidateOptionsAsync_DirectCall_DetectsFailures()
+        {
+            var validator = new DataAnnotationValidateOptionsAsync<AnnotatedOptions>(null);
+            var options = new AnnotatedOptions
+            {
+                StringLength = "111111",
+                IntRange = 10,
+                Custom = "nowhere",
+                Dep1 = "Not dep2",
+            };
+
+            var result = await validator.ValidateAsync(null, options);
+            Assert.True(result.Failed);
+            Assert.Contains("Required", result.FailureMessage);
+        }
+#endif
     }
 }

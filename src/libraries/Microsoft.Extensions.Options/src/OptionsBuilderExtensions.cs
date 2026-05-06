@@ -2,7 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -35,5 +38,52 @@ namespace Microsoft.Extensions.DependencyInjection
 
             return optionsBuilder;
         }
+
+#if NET11_0_OR_GREATER
+        /// <summary>
+        /// Enforces asynchronous options validation check on start rather than at run time.
+        /// Supports <see cref="IAsyncValidateOptions{TOptions}"/> validators, including those
+        /// backed by async validation attributes.
+        /// </summary>
+        /// <typeparam name="TOptions">The type of options.</typeparam>
+        /// <param name="optionsBuilder">The <see cref="OptionsBuilder{TOptions}"/> to configure options instance.</param>
+        /// <returns>The <see cref="OptionsBuilder{TOptions}"/> so that additional calls can be chained.</returns>
+        public static OptionsBuilder<TOptions> ValidateOnStartAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this OptionsBuilder<TOptions> optionsBuilder)
+            where TOptions : class
+        {
+            ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+            optionsBuilder.Services.TryAddTransient<IAsyncStartupValidator, AsyncStartupValidator>();
+            optionsBuilder.Services.AddOptions<AsyncStartupValidatorOptions>()
+                .Configure<IOptionsMonitor<TOptions>, IEnumerable<IAsyncValidateOptions<TOptions>>>((vo, options, validators) =>
+                {
+                    vo._validators[(typeof(TOptions), optionsBuilder.Name)] = async (ct) =>
+                    {
+                        TOptions optionsValue = options.Get(optionsBuilder.Name);
+                        var failures = new List<string>();
+
+                        foreach (IAsyncValidateOptions<TOptions> validator in validators)
+                        {
+                            ValidateOptionsResult result = await validator
+                                .ValidateAsync(optionsBuilder.Name, optionsValue, ct)
+                                .ConfigureAwait(false);
+
+                            if (result is not null && result.Failed)
+                            {
+                                failures.AddRange(result.Failures);
+                            }
+                        }
+
+                        if (failures.Count > 0)
+                        {
+                            throw new OptionsValidationException(
+                                optionsBuilder.Name, typeof(TOptions), failures);
+                        }
+                    };
+                });
+
+            return optionsBuilder;
+        }
+#endif
     }
 }

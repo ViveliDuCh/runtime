@@ -99,6 +99,15 @@ namespace Microsoft.Extensions.Hosting.Internal
                     // Call startup validators.
                     IStartupValidator? validator = Services.GetService<IStartupValidator>();
                     validator?.Validate();
+
+#if NET11_0_OR_GREATER
+                    // Call async startup validators.
+                    IAsyncStartupValidator? asyncValidator = Services.GetService<IAsyncStartupValidator>();
+                    if (asyncValidator is not null)
+                    {
+                        await asyncValidator.ValidateAsync(cancellationToken).ConfigureAwait(false);
+                    }
+#endif
                 }
                 catch (Exception ex)
                 {

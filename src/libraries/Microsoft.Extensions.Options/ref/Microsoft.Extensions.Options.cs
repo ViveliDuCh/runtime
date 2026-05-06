@@ -9,6 +9,9 @@ namespace Microsoft.Extensions.DependencyInjection
     public static partial class OptionsBuilderExtensions
     {
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStart<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
+#if NET11_0_OR_GREATER
+        public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStartAsync<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
+#endif
     }
     public static partial class OptionsServiceCollectionExtensions
     {
@@ -145,6 +148,16 @@ namespace Microsoft.Extensions.Options
     {
         void Validate();
     }
+#if NET11_0_OR_GREATER
+    public partial interface IAsyncStartupValidator
+    {
+        System.Threading.Tasks.Task ValidateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+    }
+    public partial interface IAsyncValidateOptions<in TOptions> where TOptions : class
+    {
+        System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+    }
+#endif
     public partial interface IValidateOptions<TOptions> where TOptions : class
     {
         Microsoft.Extensions.Options.ValidateOptionsResult Validate(string? name, TOptions options);

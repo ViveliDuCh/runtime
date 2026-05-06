@@ -130,6 +130,14 @@ namespace Microsoft.Extensions.Options.Generators
                 var modelToValidate = vt.ModelsToValidate[i];
 
                 GenModelValidationMethod(modelToValidate, vt.IsSynthetic, ref staticValidationAttributesDict, ref staticValidatorsDict);
+
+                // Only emit async method when the user-defined validator type
+                // explicitly implements IAsyncValidateOptions<T>
+                if (_symbolHolder.AsyncValidateOptionsSymbol is not null && vt.HasAsyncInterface)
+                {
+                    OutLn();
+                    GenAsyncModelValidationMethod(modelToValidate, vt.IsSynthetic, ref staticValidationAttributesDict);
+                }
             }
 
             OutCloseBrace();
@@ -732,6 +740,102 @@ namespace Microsoft.Extensions.Options.Generators
             GenModelSelfValidationIfNecessary(modelToValidate);
             OutLn($"return builder is null ? global::Microsoft.Extensions.Options.ValidateOptionsResult.Success : builder.Build();");
             OutCloseBrace();
+        }
+
+        private void GenAsyncModelValidationMethod(
+            ValidatedModel modelToValidate,
+            bool makeStatic,
+            ref Dictionary<string, StaticFieldInfo> staticValidationAttributesDict)
+        {
+            OutLn($"/// <summary>");
+            OutLn($"/// Validates a specific named options instance asynchronously (or all when <paramref name=\"name\"/> is <see langword=\"null\" />).");
+            OutLn($"/// </summary>");
+            OutLn($"/// <param name=\"name\">The name of the options instance being validated.</param>");
+            OutLn($"/// <param name=\"options\">The options instance.</param>");
+            OutLn($"/// <param name=\"cancellationToken\">A token to observe while waiting for the operation.</param>");
+            OutLn($"/// <returns>Validation result.</returns>");
+            OutGeneratedCodeAttribute();
+
+            if (_symbolHolder.UnconditionalSuppressMessageAttributeSymbol is not null)
+            {
+                OutLn("#if !NET");
+                OutLn($"[global::System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(\"Trimming\", \"IL2026:RequiresUnreferencedCode\",");
+                OutLn($"     Justification = \"The created ValidationContext object is used in a way that never call reflection\")]");
+                OutLn("#endif");
+            }
+
+            OutLn($"public {(makeStatic ? "static " : string.Empty)}async global::System.Threading.Tasks.ValueTask<global::Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, {modelToValidate.Name} options, global::System.Threading.CancellationToken cancellationToken = default)");
+            OutOpenBrace();
+            OutLn($"global::Microsoft.Extensions.Options.ValidateOptionsResultBuilder? builder = null;");
+            OutLn("#if NET");
+            OutLn($"var context = new {StaticValidationContextType}(options, \"{modelToValidate.SimpleName}\", null, null);");
+            OutLn("#else");
+            OutLn($"var context = new {StaticValidationContextType}(options);");
+            OutLn("#endif");
+
+            int capacity = modelToValidate.MembersToValidate.Count == 0 ? 0 : modelToValidate.MembersToValidate.Max(static vm => vm.ValidationAttributes.Count);
+            if (capacity > 0)
+            {
+                OutLn($"var validationResults = new {StaticListType}<{StaticValidationResultType}>();");
+                OutLn($"var validationAttributes = new {StaticListType}<{StaticValidationAttributeType}>({capacity});");
+            }
+            OutLn();
+
+            bool cleanListsBeforeUse = false;
+            foreach (var vm in modelToValidate.MembersToValidate)
+            {
+                if (vm.ValidationAttributes.Count > 0)
+                {
+                    GenAsyncMemberValidation(vm, ref staticValidationAttributesDict, cleanListsBeforeUse);
+                    cleanListsBeforeUse = true;
+                    OutLn();
+                }
+            }
+
+            GenAsyncModelSelfValidationIfNecessary(modelToValidate);
+            OutLn($"return builder is null ? global::Microsoft.Extensions.Options.ValidateOptionsResult.Success : builder.Build();");
+            OutCloseBrace();
+        }
+
+        private void GenAsyncMemberValidation(ValidatedMember vm, ref Dictionary<string, StaticFieldInfo> staticValidationAttributesDict, bool cleanListsBeforeUse)
+        {
+            OutLn($"context.MemberName = \"{vm.Name}\";");
+            OutLn($"context.DisplayName = string.IsNullOrEmpty(name) ? \"{vm.Name}\" : $\"{{name}}.{vm.Name}\";");
+
+            if (cleanListsBeforeUse)
+            {
+                OutLn($"validationResults.Clear();");
+                OutLn($"validationAttributes.Clear();");
+            }
+
+            foreach (var attr in vm.ValidationAttributes)
+            {
+                var staticValidationAttributeInstance = GetOrAddStaticValidationAttribute(ref staticValidationAttributesDict, attr);
+                OutLn($"validationAttributes.Add({_staticValidationAttributeHolderClassFQN}.{staticValidationAttributeInstance.FieldName});");
+            }
+
+            OutLn($"if (!await global::System.ComponentModel.DataAnnotations.Validator.TryValidateValueAsync(options.{vm.Name}{_TryGetValueNullableAnnotation}, context, validationResults, validationAttributes, cancellationToken).ConfigureAwait(false))");
+            OutOpenBrace();
+            OutLn($"(builder ??= new()).AddResults(validationResults);");
+            OutCloseBrace();
+        }
+
+        private void GenAsyncModelSelfValidationIfNecessary(ValidatedModel modelToValidate)
+        {
+            if (modelToValidate.SelfValidatesAsync)
+            {
+                OutLn($"context.MemberName = \"ValidateAsync\";");
+                OutLn($"context.DisplayName = string.IsNullOrEmpty(name) ? \"ValidateAsync\" : $\"{{name}}.ValidateAsync\";");
+                OutLn($"(builder ??= new()).AddResults(await ((global::System.ComponentModel.DataAnnotations.IAsyncValidatableObject)options).ValidateAsync(context, cancellationToken).ConfigureAwait(false));");
+                OutLn();
+            }
+            else if (modelToValidate.SelfValidates)
+            {
+                OutLn($"context.MemberName = \"Validate\";");
+                OutLn($"context.DisplayName = string.IsNullOrEmpty(name) ? \"Validate\" : $\"{{name}}.Validate\";");
+                OutLn($"(builder ??= new()).AddResults(((global::System.ComponentModel.DataAnnotations.IValidatableObject)options).Validate(context));");
+                OutLn();
+            }
         }
 
         private void GenMemberValidation(ValidatedMember vm, ref Dictionary<string, StaticFieldInfo> staticValidationAttributesDict, bool cleanListsBeforeUse)

@@ -4,6 +4,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+#if NET11_0_OR_GREATER
+using System.Threading;
+using System.Threading.Tasks;
+#endif
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -136,5 +140,150 @@ namespace Microsoft.Extensions.Options.Tests
             Assert.Throws<ArgumentNullException>(() => new ValidateOptions<object, object, object, object, object>(validName, validDependency, validDependency, validDependency, validDependency, null, validFailureMessage));
             Assert.Throws<ArgumentNullException>(() => new ValidateOptions<object, object, object, object, object, object>(validName, validDependency, validDependency, validDependency, validDependency, validDependency, null, validFailureMessage));
         }
+
+#if NET11_0_OR_GREATER
+        [Fact]
+        public void ValidateOnStartAsync_NotCalled()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .Validate(o => o.Integer > 12);
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetService<IAsyncStartupValidator>();
+            Assert.Null(validator);
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_Called()
+        {
+            var services = new ServiceCollection();
+
+            // Register an async validator that will fail
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new FailingAsyncValidator<ComplexOptions>("async error"));
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetService<IAsyncStartupValidator>();
+            Assert.NotNull(validator);
+            OptionsValidationException ex = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            Assert.Contains("async error", ex.Failures);
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_CalledMultiple()
+        {
+            var services = new ServiceCollection();
+
+            // Register two async validators that fail
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new FailingAsyncValidator<ComplexOptions>("error1"));
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new FailingAsyncValidator<ComplexOptions>("error2"));
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetService<IAsyncStartupValidator>();
+            Assert.NotNull(validator);
+            OptionsValidationException ex = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            Assert.Equal(2, ex.Failures.Count());
+            Assert.Contains("error1", ex.Failures);
+            Assert.Contains("error2", ex.Failures);
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_AllValid_Succeeds()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new SucceedingAsyncValidator<ComplexOptions>());
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 13)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetService<IAsyncStartupValidator>();
+            Assert.NotNull(validator);
+            await validator.ValidateAsync(); // Should not throw
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_NamedOptions_Skips()
+        {
+            var services = new ServiceCollection();
+
+            // Register async validator for named options "Name1"
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new FailingAsyncValidator<ComplexOptions>("error for Name1", name: "Name1"));
+
+            services.AddOptions<ComplexOptions>("Name2")
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+
+            var validator = sp.GetService<IAsyncStartupValidator>();
+            Assert.NotNull(validator);
+            // Validator is for "Name1" but we registered "Name2" — should skip
+            await validator.ValidateAsync(); // Should not throw
+        }
+
+        [Fact]
+        public void ValidateOnStartAsync_Idempotent()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .ValidateOnStartAsync();
+            services.AddOptions<FakeOptions>()
+                .ValidateOnStartAsync();
+
+            Assert.Equal(1, services.Count(sd => sd.ServiceType == typeof(IAsyncStartupValidator)));
+        }
+
+        private class FailingAsyncValidator<TOptions> : IAsyncValidateOptions<TOptions> where TOptions : class
+        {
+            private readonly string _error;
+            private readonly string? _name;
+
+            public FailingAsyncValidator(string error, string? name = null)
+            {
+                _error = error;
+                _name = name;
+            }
+
+            public ValueTask<ValidateOptionsResult> ValidateAsync(string? name, TOptions options, CancellationToken cancellationToken = default)
+            {
+                if (_name is not null && _name != name)
+                {
+                    return new ValueTask<ValidateOptionsResult>(ValidateOptionsResult.Skip);
+                }
+
+                return new ValueTask<ValidateOptionsResult>(ValidateOptionsResult.Fail(_error));
+            }
+        }
+
+        private class SucceedingAsyncValidator<TOptions> : IAsyncValidateOptions<TOptions> where TOptions : class
+        {
+            public ValueTask<ValidateOptionsResult> ValidateAsync(string? name, TOptions options, CancellationToken cancellationToken = default)
+            {
+                return new ValueTask<ValidateOptionsResult>(ValidateOptionsResult.Success);
+            }
+        }
+#endif
     }
 }
