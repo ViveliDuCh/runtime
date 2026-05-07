@@ -21,13 +21,20 @@ namespace Microsoft.Extensions.Options
 
         public async Task ValidateAsync(CancellationToken cancellationToken = default)
         {
-            List<Exception>? exceptions = null;
-
+            // Start all options-type validators in parallel
+            var validatorTasks = new List<Task>();
             foreach (Func<CancellationToken, Task> validator in _validatorOptions._validators.Values)
+            {
+                validatorTasks.Add(validator(cancellationToken));
+            }
+
+            // Await all, collecting exceptions
+            List<Exception>? exceptions = null;
+            foreach (Task task in validatorTasks)
             {
                 try
                 {
-                    await validator(cancellationToken).ConfigureAwait(false);
+                    await task.ConfigureAwait(false);
                 }
                 catch (OptionsValidationException ex)
                 {

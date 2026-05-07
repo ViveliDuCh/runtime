@@ -105,6 +105,9 @@ namespace Microsoft.Extensions.Options
                 }
             }
 
+            // Collect nested validation tasks for parallel execution
+            var nestedTasks = new List<Task<(bool IsValid, List<string>? Errors, HashSet<object>? Visited)>>();
+
             foreach (PropertyInfo propertyInfo in options.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
             {
                 // Indexers are properties which take parameters. Ignore them.
@@ -125,26 +128,42 @@ namespace Microsoft.Extensions.Options
                     visited ??= new HashSet<object>(ReferenceEqualityComparer.Instance);
                     visited.Add(options);
 
-                    results ??= new List<ValidationResult>();
-                    var nested = await TryValidateOptionsAsync(value, $"{qualifiedName}.{propertyInfo.Name}", results, errors, visited, cancellationToken).ConfigureAwait(false);
-                    res = nested.IsValid && res;
-                    errors = nested.Errors;
-                    visited = nested.Visited;
+                    string nestedName = $"{qualifiedName}.{propertyInfo.Name}";
+                    var visitedSnapshot = new HashSet<object>(visited, ReferenceEqualityComparer.Instance);
+                    nestedTasks.Add(TryValidateOptionsAsync(
+                        value, nestedName, new List<ValidationResult>(), errors: null,
+                        visitedSnapshot, cancellationToken).AsTask());
                 }
                 else if (value is IEnumerable enumerable &&
                          propertyInfo.GetCustomAttribute<ValidateEnumeratedItemsAttribute>() is not null)
                 {
                     visited ??= new HashSet<object>(ReferenceEqualityComparer.Instance);
                     visited.Add(options);
-                    results ??= new List<ValidationResult>();
 
                     int index = 0;
                     foreach (object item in enumerable)
                     {
-                        var nested = await TryValidateOptionsAsync(item, $"{qualifiedName}.{propertyInfo.Name}[{index++}]", results, errors, visited, cancellationToken).ConfigureAwait(false);
-                        res = nested.IsValid && res;
-                        errors = nested.Errors;
-                        visited = nested.Visited;
+                        string nestedName = $"{qualifiedName}.{propertyInfo.Name}[{index++}]";
+                        var visitedSnapshot = new HashSet<object>(visited, ReferenceEqualityComparer.Instance);
+                        nestedTasks.Add(TryValidateOptionsAsync(
+                            item, nestedName, new List<ValidationResult>(), errors: null,
+                            visitedSnapshot, cancellationToken).AsTask());
+                    }
+                }
+            }
+
+            // Await all nested validations and merge results
+            if (nestedTasks.Count > 0)
+            {
+                (bool IsValid, List<string>? Errors, HashSet<object>? Visited)[] nestedResults =
+                    await Task.WhenAll(nestedTasks).ConfigureAwait(false);
+                foreach (var (isValid, nestedErrors, _) in nestedResults)
+                {
+                    res = isValid && res;
+                    if (nestedErrors is not null)
+                    {
+                        errors ??= new List<string>();
+                        errors.AddRange(nestedErrors);
                     }
                 }
             }

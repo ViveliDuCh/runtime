@@ -60,14 +60,22 @@ namespace Microsoft.Extensions.DependencyInjection
                     vo._validators[(typeof(TOptions), optionsBuilder.Name)] = async (ct) =>
                     {
                         TOptions optionsValue = options.Get(optionsBuilder.Name);
-                        var failures = new List<string>();
 
+                        // Start all validators in parallel
+                        var tasks = new List<Task<ValidateOptionsResult>>();
                         foreach (IAsyncValidateOptions<TOptions> validator in validators)
                         {
-                            ValidateOptionsResult result = await validator
+                            tasks.Add(validator
                                 .ValidateAsync(optionsBuilder.Name, optionsValue, ct)
-                                .ConfigureAwait(false);
+                                .AsTask());
+                        }
 
+                        // Await all and collect failures
+                        ValidateOptionsResult[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                        var failures = new List<string>();
+
+                        foreach (ValidateOptionsResult result in results)
+                        {
                             if (result is not null && result.Failed)
                             {
                                 failures.AddRange(result.Failures);

@@ -986,6 +986,199 @@ namespace Microsoft.Extensions.Options.Tests
             Assert.True(result.Failed);
             Assert.Contains("Required", result.FailureMessage);
         }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_WithCustomError()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Boolean = false)
+                .ValidateAsync(async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Boolean;
+                }, "Boolean must be true.")
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            var error = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            ValidateFailure<ComplexOptions>(error, Options.DefaultName, 1, "Boolean must be true.");
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_WithDefaultError()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Boolean = false)
+                .ValidateAsync(async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Boolean;
+                })
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            var error = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            ValidateFailure<ComplexOptions>(error);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_Passes_WhenValid()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Boolean = true)
+                .ValidateAsync(async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Boolean;
+                }, "Boolean must be true.")
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            await validator.ValidateAsync();
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_MultipleChained()
+        {
+            var services = new ServiceCollection();
+            services.AddOptions<ComplexOptions>()
+                .Configure(o =>
+                {
+                    o.Boolean = false;
+                    o.Integer = 11;
+                })
+                .ValidateAsync(async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Boolean;
+                })
+                .ValidateAsync(async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Integer > 12;
+                }, "Integer")
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            var error = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            ValidateFailure<ComplexOptions>(error, Options.DefaultName, 2, "A validation error has occurred.", "Integer");
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_WithOneDependency()
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton("dep_value");
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Virtual = "expected")
+                .ValidateAsync<string>(async (o, dep, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Virtual == dep;
+                }, "Virtual must equal dependency.")
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            var error = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            ValidateFailure<ComplexOptions>(error, Options.DefaultName, 1, "Virtual must equal dependency.");
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanValidateAsyncLambda_WithOneDependency_Passes()
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton("expected");
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Virtual = "expected")
+                .ValidateAsync<string>(async (o, dep, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return o.Virtual == dep;
+                }, "Virtual must equal dependency.")
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+            await validator.ValidateAsync();
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task AsyncValidateOptions_NameMatching_Skips()
+        {
+            var validator = new AsyncValidateOptions<ComplexOptions>(
+                "specific",
+                async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return false;
+                },
+                "Should not see this.");
+
+            var result = await validator.ValidateAsync("other", new ComplexOptions());
+            Assert.True(result.Skipped);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task AsyncValidateOptions_NullName_ValidatesAll()
+        {
+            var validator = new AsyncValidateOptions<ComplexOptions>(
+                null,
+                async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return false;
+                },
+                "Always fails.");
+
+            var result = await validator.ValidateAsync("anyname", new ComplexOptions());
+            Assert.True(result.Failed);
+            Assert.Contains("Always fails.", result.FailureMessage);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task AsyncValidateOptions_NameMatches_Validates()
+        {
+            var validator = new AsyncValidateOptions<ComplexOptions>(
+                "target",
+                async (o, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return true;
+                },
+                "Should not fail.");
+
+            var result = await validator.ValidateAsync("target", new ComplexOptions());
+            Assert.True(result.Succeeded);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task AsyncValidateOptions_WithDependency_NameMatching_Skips()
+        {
+            var validator = new AsyncValidateOptions<ComplexOptions, string>(
+                "specific",
+                "dep",
+                async (o, dep, ct) =>
+                {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    return false;
+                },
+                "Should not see this.");
+
+            var result = await validator.ValidateAsync("other", new ComplexOptions());
+            Assert.True(result.Skipped);
+        }
 #endif
     }
 }

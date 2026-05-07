@@ -3,6 +3,8 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Extensions.Options
@@ -570,5 +572,224 @@ namespace Microsoft.Extensions.Options
                     failureMessage));
             return this;
         }
+
+#if NET11_0_OR_GREATER
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync(Func<TOptions, CancellationToken, ValueTask<bool>> validation)
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync(Func<TOptions, CancellationToken, ValueTask<bool>> validation, string failureMessage)
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddSingleton<IAsyncValidateOptions<TOptions>>(new AsyncValidateOptions<TOptions>(Name, validation, failureMessage));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <typeparam name="TDep">The dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep>(Func<TOptions, TDep, CancellationToken, ValueTask<bool>> validation) where TDep : notnull
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <typeparam name="TDep">The dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep>(Func<TOptions, TDep, CancellationToken, ValueTask<bool>> validation, string failureMessage) where TDep : notnull
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddTransient<IAsyncValidateOptions<TOptions>>(sp =>
+                new AsyncValidateOptions<TOptions, TDep>(Name, sp.GetRequiredService<TDep>(), validation, failureMessage));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2>(Func<TOptions, TDep1, TDep2, CancellationToken, ValueTask<bool>> validation)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2>(Func<TOptions, TDep1, TDep2, CancellationToken, ValueTask<bool>> validation, string failureMessage)
+            where TDep1 : notnull
+            where TDep2 : notnull
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddTransient<IAsyncValidateOptions<TOptions>>(sp =>
+                new AsyncValidateOptions<TOptions, TDep1, TDep2>(Name,
+                    sp.GetRequiredService<TDep1>(),
+                    sp.GetRequiredService<TDep2>(),
+                    validation,
+                    failureMessage));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3>(Func<TOptions, TDep1, TDep2, TDep3, CancellationToken, ValueTask<bool>> validation)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3>(Func<TOptions, TDep1, TDep2, TDep3, CancellationToken, ValueTask<bool>> validation, string failureMessage)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddTransient<IAsyncValidateOptions<TOptions>>(sp =>
+                new AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3>(Name,
+                    sp.GetRequiredService<TDep1>(),
+                    sp.GetRequiredService<TDep2>(),
+                    sp.GetRequiredService<TDep3>(),
+                    validation,
+                    failureMessage));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep4">The fourth dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4>(Func<TOptions, TDep1, TDep2, TDep3, TDep4, CancellationToken, ValueTask<bool>> validation)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+            where TDep4 : notnull
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep4">The fourth dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4>(Func<TOptions, TDep1, TDep2, TDep3, TDep4, CancellationToken, ValueTask<bool>> validation, string failureMessage)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+            where TDep4 : notnull
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddTransient<IAsyncValidateOptions<TOptions>>(sp =>
+                new AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3, TDep4>(Name,
+                    sp.GetRequiredService<TDep1>(),
+                    sp.GetRequiredService<TDep2>(),
+                    sp.GetRequiredService<TDep3>(),
+                    sp.GetRequiredService<TDep4>(),
+                    validation,
+                    failureMessage));
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type using a default failure message.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep4">The fourth dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep5">The fifth dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, CancellationToken, ValueTask<bool>> validation)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+            where TDep4 : notnull
+            where TDep5 : notnull
+            => ValidateAsync(validation: validation, failureMessage: DefaultValidationFailureMessage);
+
+        /// <summary>
+        /// Registers an asynchronous validation action for an options type.
+        /// </summary>
+        /// <typeparam name="TDep1">The first dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep2">The second dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep3">The third dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep4">The fourth dependency used by the validation function.</typeparam>
+        /// <typeparam name="TDep5">The fifth dependency used by the validation function.</typeparam>
+        /// <param name="validation">The asynchronous validation function.</param>
+        /// <param name="failureMessage">The failure message to use when validation fails.</param>
+        /// <returns>The current <see cref="OptionsBuilder{TOptions}"/>.</returns>
+        public virtual OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, CancellationToken, ValueTask<bool>> validation, string failureMessage)
+            where TDep1 : notnull
+            where TDep2 : notnull
+            where TDep3 : notnull
+            where TDep4 : notnull
+            where TDep5 : notnull
+        {
+            ArgumentNullException.ThrowIfNull(validation);
+
+            Services.AddTransient<IAsyncValidateOptions<TOptions>>(sp =>
+                new AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5>(Name,
+                    sp.GetRequiredService<TDep1>(),
+                    sp.GetRequiredService<TDep2>(),
+                    sp.GetRequiredService<TDep3>(),
+                    sp.GetRequiredService<TDep4>(),
+                    sp.GetRequiredService<TDep5>(),
+                    validation,
+                    failureMessage));
+            return this;
+        }
+#endif
     }
 }

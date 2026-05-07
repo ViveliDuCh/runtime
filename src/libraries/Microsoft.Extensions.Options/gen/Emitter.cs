@@ -767,33 +767,131 @@ namespace Microsoft.Extensions.Options.Generators
             OutLn($"public {(makeStatic ? "static " : string.Empty)}async global::System.Threading.Tasks.ValueTask<global::Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, {modelToValidate.Name} options, global::System.Threading.CancellationToken cancellationToken = default)");
             OutOpenBrace();
             OutLn($"global::Microsoft.Extensions.Options.ValidateOptionsResultBuilder? builder = null;");
-            OutLn("#if NET");
-            OutLn($"var context = new {StaticValidationContextType}(options, \"{modelToValidate.SimpleName}\", null, null);");
-            OutLn("#else");
-            OutLn($"var context = new {StaticValidationContextType}(options);");
-            OutLn("#endif");
 
-            int capacity = modelToValidate.MembersToValidate.Count == 0 ? 0 : modelToValidate.MembersToValidate.Max(static vm => vm.ValidationAttributes.Count);
-            if (capacity > 0)
-            {
-                OutLn($"var validationResults = new {StaticListType}<{StaticValidationResultType}>();");
-                OutLn($"var validationAttributes = new {StaticListType}<{StaticValidationAttributeType}>({capacity});");
-            }
-            OutLn();
-
-            bool cleanListsBeforeUse = false;
+            // Count members with validation attributes to decide parallel vs sequential
+            int membersWithAttrsCount = 0;
             foreach (var vm in modelToValidate.MembersToValidate)
             {
                 if (vm.ValidationAttributes.Count > 0)
                 {
-                    GenAsyncMemberValidation(vm, ref staticValidationAttributesDict, cleanListsBeforeUse);
-                    cleanListsBeforeUse = true;
-                    OutLn();
+                    membersWithAttrsCount++;
                 }
             }
 
-            GenAsyncModelSelfValidationIfNecessary(modelToValidate);
-            OutLn($"return builder is null ? global::Microsoft.Extensions.Options.ValidateOptionsResult.Success : builder.Build();");
+            if (membersWithAttrsCount >= 2)
+            {
+                // Parallel path: emit local async functions + Task.WhenAll
+                OutLn();
+                OutLn($"var memberTasks = new global::System.Threading.Tasks.Task<{StaticListType}<{StaticValidationResultType}>?>[{membersWithAttrsCount}];");
+
+                int taskIndex = 0;
+                foreach (var vm in modelToValidate.MembersToValidate)
+                {
+                    if (vm.ValidationAttributes.Count > 0)
+                    {
+                        OutLn($"memberTasks[{taskIndex}] = ValidateMember_{vm.Name}Async();");
+                        taskIndex++;
+                    }
+                }
+
+                OutLn();
+                OutLn($"{StaticListType}<{StaticValidationResultType}>?[] memberResults = await global::System.Threading.Tasks.Task.WhenAll(memberTasks).ConfigureAwait(false);");
+                OutLn($"foreach ({StaticListType}<{StaticValidationResultType}>? memberResult in memberResults)");
+                OutOpenBrace();
+                OutLn($"if (memberResult is not null)");
+                OutOpenBrace();
+                OutLn($"(builder ??= new()).AddResults(memberResult);");
+                OutCloseBrace();
+                OutCloseBrace();
+                OutLn();
+
+                // Self-validation needs its own context
+                if (modelToValidate.SelfValidatesAsync || modelToValidate.SelfValidates)
+                {
+                    OutLn("#if NET");
+                    OutLn($"var context = new {StaticValidationContextType}(options, \"{modelToValidate.SimpleName}\", null, null);");
+                    OutLn("#else");
+                    OutLn($"var context = new {StaticValidationContextType}(options);");
+                    OutLn("#endif");
+                }
+
+                GenAsyncModelSelfValidationIfNecessary(modelToValidate);
+                OutLn($"return builder is null ? global::Microsoft.Extensions.Options.ValidateOptionsResult.Success : builder.Build();");
+                OutLn();
+
+                // Emit local async functions for each member
+                foreach (var vm in modelToValidate.MembersToValidate)
+                {
+                    if (vm.ValidationAttributes.Count > 0)
+                    {
+                        GenAsyncMemberValidationLocalFunction(vm, modelToValidate, ref staticValidationAttributesDict);
+                        OutLn();
+                    }
+                }
+            }
+            else
+            {
+                // Sequential path (0 or 1 members): keep existing behavior
+                OutLn("#if NET");
+                OutLn($"var context = new {StaticValidationContextType}(options, \"{modelToValidate.SimpleName}\", null, null);");
+                OutLn("#else");
+                OutLn($"var context = new {StaticValidationContextType}(options);");
+                OutLn("#endif");
+
+                int capacity = modelToValidate.MembersToValidate.Count == 0 ? 0 : modelToValidate.MembersToValidate.Max(static vm => vm.ValidationAttributes.Count);
+                if (capacity > 0)
+                {
+                    OutLn($"var validationResults = new {StaticListType}<{StaticValidationResultType}>();");
+                    OutLn($"var validationAttributes = new {StaticListType}<{StaticValidationAttributeType}>({capacity});");
+                }
+                OutLn();
+
+                bool cleanListsBeforeUse = false;
+                foreach (var vm in modelToValidate.MembersToValidate)
+                {
+                    if (vm.ValidationAttributes.Count > 0)
+                    {
+                        GenAsyncMemberValidation(vm, ref staticValidationAttributesDict, cleanListsBeforeUse);
+                        cleanListsBeforeUse = true;
+                        OutLn();
+                    }
+                }
+
+                GenAsyncModelSelfValidationIfNecessary(modelToValidate);
+                OutLn($"return builder is null ? global::Microsoft.Extensions.Options.ValidateOptionsResult.Success : builder.Build();");
+            }
+
+            OutCloseBrace();
+        }
+
+        private void GenAsyncMemberValidationLocalFunction(
+            ValidatedMember vm,
+            ValidatedModel modelToValidate,
+            ref Dictionary<string, StaticFieldInfo> staticValidationAttributesDict)
+        {
+            OutLn($"async global::System.Threading.Tasks.Task<{StaticListType}<{StaticValidationResultType}>?> ValidateMember_{vm.Name}Async()");
+            OutOpenBrace();
+            OutLn("#if NET");
+            OutLn($"var memberContext = new {StaticValidationContextType}(options, \"{modelToValidate.SimpleName}\", null, null);");
+            OutLn("#else");
+            OutLn($"var memberContext = new {StaticValidationContextType}(options);");
+            OutLn("#endif");
+            OutLn($"memberContext.MemberName = \"{vm.Name}\";");
+            OutLn($"memberContext.DisplayName = string.IsNullOrEmpty(name) ? \"{vm.Name}\" : $\"{{name}}.{vm.Name}\";");
+            OutLn($"var validationResults = new {StaticListType}<{StaticValidationResultType}>();");
+            OutLn($"var validationAttributes = new {StaticListType}<{StaticValidationAttributeType}>({vm.ValidationAttributes.Count});");
+
+            foreach (var attr in vm.ValidationAttributes)
+            {
+                var staticValidationAttributeInstance = GetOrAddStaticValidationAttribute(ref staticValidationAttributesDict, attr);
+                OutLn($"validationAttributes.Add({_staticValidationAttributeHolderClassFQN}.{staticValidationAttributeInstance.FieldName});");
+            }
+
+            OutLn($"if (!await global::System.ComponentModel.DataAnnotations.Validator.TryValidateValueAsync(options.{vm.Name}{_TryGetValueNullableAnnotation}, memberContext, validationResults, validationAttributes, cancellationToken).ConfigureAwait(false))");
+            OutOpenBrace();
+            OutLn($"return validationResults;");
+            OutCloseBrace();
+            OutLn($"return null;");
             OutCloseBrace();
         }
 

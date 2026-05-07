@@ -12,8 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(LibrariesProjectRoot)System.ComponentModel.Annotations\src\System.ComponentModel.Annotations.csproj" />
-    <ProjectReference Include="$(LibrariesProjectRoot)System.Runtime\src\System.Runtime.csproj" />
+    <ProjectReference Include="..\..\SharedModels\SharedModels.csproj" />
   </ItemGroup>
 
 </Project>

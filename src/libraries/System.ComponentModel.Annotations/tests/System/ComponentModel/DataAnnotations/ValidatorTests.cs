@@ -1560,6 +1560,48 @@ namespace System.ComponentModel.DataAnnotations.Tests
         {
         }
 
+        [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter, AllowMultiple = true)]
+        public class AsyncDelayedSucceedsAttribute : AsyncValidationAttribute
+        {
+            protected override async ValueTask<ValidationResult> IsValidAsync(
+                object value, ValidationContext validationContext, CancellationToken cancellationToken)
+            {
+                await Task.Delay(100, cancellationToken);
+
+                return ValidationResult.Success;
+            }
+        }
+
+        [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter, AllowMultiple = true)]
+        public class AsyncDelayedFailsAttribute : AsyncValidationAttribute
+        {
+            protected override async ValueTask<ValidationResult> IsValidAsync(
+                object value, ValidationContext validationContext, CancellationToken cancellationToken)
+            {
+                await Task.Delay(100, cancellationToken);
+
+                return new ValidationResult("Async delayed validation failed");
+            }
+        }
+
+        public class HasMultipleAsyncProperties
+        {
+            [AsyncDelayedSucceeds]
+            public string Prop1 { get; set; } = "value";
+
+            [AsyncDelayedSucceeds]
+            public string Prop2 { get; set; } = "value";
+        }
+
+        public class HasMultipleFailingAsyncProperties
+        {
+            [AsyncDelayedFails]
+            public string Prop1 { get; set; } = "value";
+
+            [AsyncDelayedFails]
+            public string Prop2 { get; set; } = "value";
+        }
+
         public class AsyncValidatableSuccess : IAsyncValidatableObject
         {
             public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
@@ -2553,6 +2595,57 @@ namespace System.ComponentModel.DataAnnotations.Tests
             var ex = await Assert.ThrowsAsync<ValidationException>(
                 async () => await Validator.ValidateObjectAsync(obj, ctx, true));
             Assert.Equal("Async class validation failed", ex.ValidationResult.ErrorMessage);
+        }
+
+        [Fact]
+        public static async Task TryValidateObjectAsync_MultipleAsyncProperties_RunInParallel()
+        {
+            var obj = new HasMultipleAsyncProperties();
+            var ctx = new ValidationContext(obj);
+            var results = new List<ValidationResult>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Assert.True(await Validator.TryValidateObjectAsync(obj, ctx, results, true));
+            sw.Stop();
+
+            // If parallel: ~100ms. If sequential: ~200ms (2 properties × 100ms each).
+            Assert.True(sw.ElapsedMilliseconds < 180,
+                $"Properties should validate in parallel. Elapsed: {sw.ElapsedMilliseconds}ms");
+            Assert.Empty(results);
+        }
+
+        [Fact]
+        public static async Task TryValidateObjectAsync_MultipleAsyncProperties_CollectsAllFailures()
+        {
+            var obj = new HasMultipleFailingAsyncProperties();
+            var ctx = new ValidationContext(obj);
+            var results = new List<ValidationResult>();
+            Assert.False(await Validator.TryValidateObjectAsync(obj, ctx, results, true));
+            Assert.Equal(2, results.Count);
+        }
+
+        [Fact]
+        public static async Task TryValidateValueAsync_MultipleAsyncAttrs_RunInParallel()
+        {
+            var ctx = new ValidationContext(new object()) { MemberName = "TestProp" };
+            var results = new List<ValidationResult>();
+            var attrs = new ValidationAttribute[] { new AsyncDelayedSucceedsAttribute(), new AsyncDelayedSucceedsAttribute() };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Assert.True(await Validator.TryValidateValueAsync("Valid Value", ctx, results, attrs));
+            sw.Stop();
+
+            // If parallel: ~100ms. If sequential: ~200ms.
+            Assert.True(sw.ElapsedMilliseconds < 180,
+                $"Async attributes should validate in parallel. Elapsed: {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public static async Task TryValidateValueAsync_MultipleAsyncAttrs_CollectsAllFailures()
+        {
+            var ctx = new ValidationContext(new object()) { MemberName = "TestProp" };
+            var results = new List<ValidationResult>();
+            var attrs = new ValidationAttribute[] { new AsyncAlwaysFailsAttribute(), new AsyncAlwaysFailsAttribute() };
+            Assert.False(await Validator.TryValidateValueAsync("anything", ctx, results, attrs));
+            Assert.Equal(2, results.Count);
         }
     }
 }

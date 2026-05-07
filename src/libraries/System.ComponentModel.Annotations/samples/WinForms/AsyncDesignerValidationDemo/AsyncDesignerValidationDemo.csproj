@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>$(NetCoreAppCurrent)-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <UseWindowsForms>true</UseWindowsForms>
+    <NoWarn>$(NoWarn);CA2007;CS1591;CA1050;CA1515</NoWarn>
+    <DocumentationFile></DocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SharedModels\SharedModels.csproj" />
+  </ItemGroup>
+
+</Project>

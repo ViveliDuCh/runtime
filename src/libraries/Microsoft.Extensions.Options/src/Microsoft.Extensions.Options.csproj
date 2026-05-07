@@ -13,6 +13,7 @@
     <Compile Remove="IAsyncStartupValidator.cs" />
     <Compile Remove="AsyncStartupValidator.cs" />
     <Compile Remove="AsyncStartupValidatorOptions.cs" />
+    <Compile Remove="AsyncValidateOptions.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">

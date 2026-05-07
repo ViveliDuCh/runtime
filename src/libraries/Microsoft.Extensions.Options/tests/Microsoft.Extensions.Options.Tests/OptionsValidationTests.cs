@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 #if NET11_0_OR_GREATER
 using System.Threading;
@@ -283,6 +284,102 @@ namespace Microsoft.Extensions.Options.Tests
             {
                 return new ValueTask<ValidateOptionsResult>(ValidateOptionsResult.Success);
             }
+        }
+
+        private class DelayedAsyncValidator<TOptions> : IAsyncValidateOptions<TOptions> where TOptions : class
+        {
+            private readonly TimeSpan _delay;
+            private readonly bool _succeed;
+
+            public DelayedAsyncValidator(TimeSpan delay, bool succeed)
+            {
+                _delay = delay;
+                _succeed = succeed;
+            }
+
+            public async ValueTask<ValidateOptionsResult> ValidateAsync(
+                string? name, TOptions options, CancellationToken cancellationToken = default)
+            {
+                await Task.Delay(_delay, cancellationToken);
+
+                return _succeed ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail("delayed failure");
+            }
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_RunsValidatorsInParallel()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new DelayedAsyncValidator<ComplexOptions>(TimeSpan.FromMilliseconds(200), succeed: true));
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new DelayedAsyncValidator<ComplexOptions>(TimeSpan.FromMilliseconds(200), succeed: true));
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+
+            var sw = Stopwatch.StartNew();
+            await validator.ValidateAsync();
+            sw.Stop();
+
+            // If parallel: ~200ms. If sequential: ~400ms.
+            Assert.True(sw.ElapsedMilliseconds < 350,
+                $"Validators should run in parallel. Elapsed: {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public async Task ValidateOnStartAsync_ParallelCollectsAllFailures()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new DelayedAsyncValidator<ComplexOptions>(TimeSpan.FromMilliseconds(50), succeed: false));
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new DelayedAsyncValidator<ComplexOptions>(TimeSpan.FromMilliseconds(50), succeed: false));
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+
+            OptionsValidationException ex = await Assert.ThrowsAsync<OptionsValidationException>(
+                () => validator.ValidateAsync());
+            Assert.Equal(2, ex.Failures.Count());
+        }
+
+        [Fact]
+        public async Task AsyncStartupValidator_RunsOptionsTypesInParallel()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton<IAsyncValidateOptions<ComplexOptions>>(
+                new DelayedAsyncValidator<ComplexOptions>(TimeSpan.FromMilliseconds(200), succeed: true));
+            services.AddSingleton<IAsyncValidateOptions<FakeOptions>>(
+                new DelayedAsyncValidator<FakeOptions>(TimeSpan.FromMilliseconds(200), succeed: true));
+
+            services.AddOptions<ComplexOptions>()
+                .Configure(o => o.Integer = 5)
+                .ValidateOnStartAsync();
+            services.AddOptions<FakeOptions>()
+                .ValidateOnStartAsync();
+
+            var sp = services.BuildServiceProvider();
+            var validator = sp.GetRequiredService<IAsyncStartupValidator>();
+
+            var sw = Stopwatch.StartNew();
+            await validator.ValidateAsync();
+            sw.Stop();
+
+            // If parallel: ~200ms. If sequential: ~400ms.
+            Assert.True(sw.ElapsedMilliseconds < 350,
+                $"Options types should validate in parallel. Elapsed: {sw.ElapsedMilliseconds}ms");
         }
 #endif
     }

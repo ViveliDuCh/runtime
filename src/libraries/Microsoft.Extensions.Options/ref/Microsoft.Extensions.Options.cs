@@ -197,6 +197,20 @@ namespace Microsoft.Extensions.Options
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> Validate<TDep1, TDep2, TDep3, TDep4>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, bool> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull { throw null; }
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> Validate<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, bool> validation) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> Validate<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, bool> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
+#if NET11_0_OR_GREATER
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync(System.Func<TOptions, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync(System.Func<TOptions, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep>(System.Func<TOptions, TDep, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep>(System.Func<TOptions, TDep, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2>(System.Func<TOptions, TDep1, TDep2, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep1 : notnull where TDep2 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2>(System.Func<TOptions, TDep1, TDep2, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3>(System.Func<TOptions, TDep1, TDep2, TDep3, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3>(System.Func<TOptions, TDep1, TDep2, TDep3, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
+        public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
+#endif
     }
     public partial class OptionsCache<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions> : Microsoft.Extensions.Options.IOptionsMonitorCache<TOptions> where TOptions : class
     {
@@ -412,4 +426,69 @@ namespace Microsoft.Extensions.Options
         public System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, bool> Validation { get { throw null; } }
         public Microsoft.Extensions.Options.ValidateOptionsResult Validate(string? name, TOptions options) { throw null; }
     }
+#if NET11_0_OR_GREATER
+    public partial class AsyncValidateOptions<TOptions> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, System.Func<TOptions, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+    public partial class AsyncValidateOptions<TOptions, TDep> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, TDep dependency, System.Func<TOptions, TDep, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public TDep Dependency { get { throw null; } }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, TDep, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+    public partial class AsyncValidateOptions<TOptions, TDep1, TDep2> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, TDep1 dependency1, TDep2 dependency2, System.Func<TOptions, TDep1, TDep2, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public TDep1 Dependency1 { get { throw null; } }
+        public TDep2 Dependency2 { get { throw null; } }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, TDep1, TDep2, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+    public partial class AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, TDep1 dependency1, TDep2 dependency2, TDep3 dependency3, System.Func<TOptions, TDep1, TDep2, TDep3, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public TDep1 Dependency1 { get { throw null; } }
+        public TDep2 Dependency2 { get { throw null; } }
+        public TDep3 Dependency3 { get { throw null; } }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, TDep1, TDep2, TDep3, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+    public partial class AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3, TDep4> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, TDep1 dependency1, TDep2 dependency2, TDep3 dependency3, TDep4 dependency4, System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public TDep1 Dependency1 { get { throw null; } }
+        public TDep2 Dependency2 { get { throw null; } }
+        public TDep3 Dependency3 { get { throw null; } }
+        public TDep4 Dependency4 { get { throw null; } }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+    public partial class AsyncValidateOptions<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5> : Microsoft.Extensions.Options.IAsyncValidateOptions<TOptions> where TOptions : class
+    {
+        public AsyncValidateOptions(string? name, TDep1 dependency1, TDep2 dependency2, TDep3 dependency3, TDep4 dependency4, TDep5 dependency5, System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) { }
+        public TDep1 Dependency1 { get { throw null; } }
+        public TDep2 Dependency2 { get { throw null; } }
+        public TDep3 Dependency3 { get { throw null; } }
+        public TDep4 Dependency4 { get { throw null; } }
+        public TDep5 Dependency5 { get { throw null; } }
+        public string FailureMessage { get { throw null; } }
+        public string? Name { get { throw null; } }
+        public System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> Validation { get { throw null; } }
+        public System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default) { throw null; }
+    }
+#endif
 }

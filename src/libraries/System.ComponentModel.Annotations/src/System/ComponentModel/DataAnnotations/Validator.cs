@@ -709,16 +709,30 @@ namespace System.ComponentModel.DataAnnotations
             var properties = GetPropertyValues(instance, validationContext);
             var errors = new List<ValidationError>();
 
-            foreach (var property in properties)
+            if (validateAllProperties)
             {
-                var attributes = _store.GetPropertyValidationAttributes(property.Key);
-
-                if (validateAllProperties)
+                // Start all property validations in parallel
+                var tasks = new List<Task<List<ValidationError>>>(properties.Count);
+                foreach (var property in properties)
                 {
-                    errors.AddRange(await GetValidationErrorsAsync(property.Value, property.Key, attributes, breakOnFirstError, cancellationToken).ConfigureAwait(false));
+                    var attributes = _store.GetPropertyValidationAttributes(property.Key);
+                    tasks.Add(GetValidationErrorsAsync(
+                        property.Value, property.Key, attributes,
+                        breakOnFirstError, cancellationToken).AsTask());
                 }
-                else
+
+                // Await all and collect errors
+                List<ValidationError>[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                foreach (List<ValidationError> propertyErrors in results)
                 {
+                    errors.AddRange(propertyErrors);
+                }
+            }
+            else
+            {
+                foreach (var property in properties)
+                {
+                    var attributes = _store.GetPropertyValidationAttributes(property.Key);
                     foreach (ValidationAttribute attribute in attributes)
                     {
                         if (attribute is RequiredAttribute reqAttr)
@@ -731,11 +745,11 @@ namespace System.ComponentModel.DataAnnotations
                             break;
                         }
                     }
-                }
 
-                if (breakOnFirstError && errors.Count > 0)
-                {
-                    break;
+                    if (breakOnFirstError && errors.Count > 0)
+                    {
+                        break;
+                    }
                 }
             }
 
@@ -799,20 +813,23 @@ namespace System.ComponentModel.DataAnnotations
                 }
             }
 
-            // Phase 2: Only run async validators if all sync validators passed
+            // Phase 2: Only run async validators if all sync validators passed — run in parallel
             if (errors.Count == 0 && asyncAttributes is not null)
             {
+                // Start all async attribute validations in parallel
+                var asyncTasks = new List<(AsyncValidationAttribute Attr, Task<ValidationResult?> Task)>(asyncAttributes.Count);
                 foreach (AsyncValidationAttribute asyncAttr in asyncAttributes)
                 {
-                    ValidationResult? result = await asyncAttr.GetValidationResultAsync(value, validationContext, cancellationToken).ConfigureAwait(false);
+                    asyncTasks.Add((asyncAttr, asyncAttr.GetValidationResultAsync(value, validationContext, cancellationToken).AsTask()));
+                }
+
+                // Await all and collect errors
+                foreach (var (asyncAttr, task) in asyncTasks)
+                {
+                    ValidationResult? result = await task.ConfigureAwait(false);
                     if (result != ValidationResult.Success)
                     {
                         errors.Add(new ValidationError(asyncAttr, value, result!));
-
-                        if (breakOnFirstError)
-                        {
-                            break;
-                        }
                     }
                 }
             }
