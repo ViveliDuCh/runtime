@@ -662,16 +662,11 @@ namespace System.ComponentModel.DataAnnotations
             // Step 3: Test for IAsyncValidatableObject implementation (preferred), fall back to IValidatableObject
             if (instance is IAsyncValidatableObject asyncValidatable)
             {
-                IEnumerable<ValidationResult> results = await asyncValidatable.ValidateAsync(validationContext, cancellationToken).ConfigureAwait(false);
-
-                if (results != null)
+                await foreach (ValidationResult result in asyncValidatable.ValidateAsync(validationContext, cancellationToken).ConfigureAwait(false))
                 {
-                    foreach (ValidationResult result in results)
+                    if (result != ValidationResult.Success)
                     {
-                        if (result != ValidationResult.Success)
-                        {
-                            errors.Add(new ValidationError(null, instance, result));
-                        }
+                        errors.Add(new ValidationError(null, instance, result));
                     }
                 }
             }

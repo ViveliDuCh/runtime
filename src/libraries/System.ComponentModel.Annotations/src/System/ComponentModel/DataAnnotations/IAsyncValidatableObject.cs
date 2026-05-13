@@ -3,18 +3,17 @@
 
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace System.ComponentModel.DataAnnotations
 {
     /// <summary>
-    ///     Provides a way for an object to be validated asynchronously.
+    ///     Provides a way for an object to be validated asynchronously, streaming results as they become available.
     /// </summary>
     public interface IAsyncValidatableObject
     {
         /// <summary>
-        ///     Determines whether the specified object is valid asynchronously.
+        ///     Determines whether the specified object is valid asynchronously, yielding validation results as they are produced.
         /// </summary>
-        ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext, CancellationToken cancellationToken = default);
+        IAsyncEnumerable<ValidationResult> ValidateAsync(ValidationContext validationContext, CancellationToken cancellationToken = default);
     }
 }

@@ -207,7 +207,7 @@ namespace System.ComponentModel.DataAnnotations
     }
     public partial interface IAsyncValidatableObject
     {
-        System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<System.ComponentModel.DataAnnotations.ValidationResult>> ValidateAsync(System.ComponentModel.DataAnnotations.ValidationContext validationContext, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+        System.Collections.Generic.IAsyncEnumerable<System.ComponentModel.DataAnnotations.ValidationResult> ValidateAsync(System.ComponentModel.DataAnnotations.ValidationContext validationContext, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
     }
     public partial interface IValidatableObject
     {

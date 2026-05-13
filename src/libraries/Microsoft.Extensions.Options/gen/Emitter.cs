@@ -924,7 +924,10 @@ namespace Microsoft.Extensions.Options.Generators
             {
                 OutLn($"context.MemberName = \"ValidateAsync\";");
                 OutLn($"context.DisplayName = string.IsNullOrEmpty(name) ? \"ValidateAsync\" : $\"{{name}}.ValidateAsync\";");
-                OutLn($"(builder ??= new()).AddResults(await ((global::System.ComponentModel.DataAnnotations.IAsyncValidatableObject)options).ValidateAsync(context, cancellationToken).ConfigureAwait(false));");
+                OutLn($"await foreach (var asyncValidationResult in ((global::System.ComponentModel.DataAnnotations.IAsyncValidatableObject)options).ValidateAsync(context, cancellationToken).ConfigureAwait(false))");
+                OutOpenBrace();
+                OutLn($"(builder ??= new()).AddResult(asyncValidationResult);");
+                OutCloseBrace();
                 OutLn();
             }
             else if (modelToValidate.SelfValidates)

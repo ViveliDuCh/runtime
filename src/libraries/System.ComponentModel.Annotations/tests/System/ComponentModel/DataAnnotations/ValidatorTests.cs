@@ -1604,31 +1604,33 @@ namespace System.ComponentModel.DataAnnotations.Tests
 
         public class AsyncValidatableSuccess : IAsyncValidatableObject
         {
-            public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
-                ValidationContext validationContext, CancellationToken cancellationToken)
+            public async IAsyncEnumerable<ValidationResult> ValidateAsync(
+                ValidationContext validationContext, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             {
-                return new ValueTask<IEnumerable<ValidationResult>>(
-                    new ValidationResult[] { ValidationResult.Success });
+                await Task.CompletedTask;
+                yield return ValidationResult.Success;
             }
         }
 
         public class AsyncValidatableError : IAsyncValidatableObject
         {
-            public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
-                ValidationContext validationContext, CancellationToken cancellationToken)
+            public async IAsyncEnumerable<ValidationResult> ValidateAsync(
+                ValidationContext validationContext, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             {
-                return new ValueTask<IEnumerable<ValidationResult>>(
-                    new ValidationResult[] { new ValidationResult("async object error") });
+                await Task.CompletedTask;
+                yield return new ValidationResult("async object error");
             }
         }
 
         public class AsyncValidatableNull : IAsyncValidatableObject
         {
-            public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
-                ValidationContext validationContext, CancellationToken cancellationToken)
+#pragma warning disable CS1998
+            public async IAsyncEnumerable<ValidationResult> ValidateAsync(
+                ValidationContext validationContext, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             {
-                return new ValueTask<IEnumerable<ValidationResult>>((IEnumerable<ValidationResult>)null);
+                yield break;
             }
+#pragma warning restore CS1998
         }
 
         public class DualValidatableModel : IValidatableObject, IAsyncValidatableObject
@@ -1638,11 +1640,11 @@ namespace System.ComponentModel.DataAnnotations.Tests
                 return new ValidationResult[] { new ValidationResult("sync error from dual model") };
             }
 
-            public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
-                ValidationContext validationContext, CancellationToken cancellationToken)
+            public async IAsyncEnumerable<ValidationResult> ValidateAsync(
+                ValidationContext validationContext, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             {
-                return new ValueTask<IEnumerable<ValidationResult>>(
-                    new ValidationResult[] { new ValidationResult("async error from dual model") });
+                await Task.CompletedTask;
+                yield return new ValidationResult("async error from dual model");
             }
         }
 
@@ -1651,11 +1653,11 @@ namespace System.ComponentModel.DataAnnotations.Tests
             [Required]
             public string RequiredProp { get; set; }
 
-            public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
-                ValidationContext validationContext, CancellationToken cancellationToken)
+            public async IAsyncEnumerable<ValidationResult> ValidateAsync(
+                ValidationContext validationContext, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             {
-                return new ValueTask<IEnumerable<ValidationResult>>(
-                    new ValidationResult[] { new ValidationResult("async object error") });
+                await Task.CompletedTask;
+                yield return new ValidationResult("async object error");
             }
         }
 

@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -33,16 +34,14 @@ public class Order : IAsyncValidatableObject
     public int? Delay { get; set; }
 
     /// <inheritdoc />
-    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
+    public async IAsyncEnumerable<ValidationResult> ValidateAsync(
         ValidationContext validationContext,
-        CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var results = new List<ValidationResult>();
-
         if (Delay is null)
         {
-            results.Add(new ValidationResult("Delay is not configured."));
-            return results;
+            yield return new ValidationResult("Delay is not configured.");
+            yield break;
         }
 
         await Task.Delay((int)Delay, cancellationToken);
@@ -50,11 +49,9 @@ public class Order : IAsyncValidatableObject
         decimal totalCost = Quantity * UnitPrice;
         if (totalCost > 50_000m)
         {
-            results.Add(new ValidationResult(
+            yield return new ValidationResult(
                 $"Total cost ({totalCost:C}) exceeds the $50,000 limit.",
-                new[] { nameof(Quantity), nameof(UnitPrice) }));
+                new[] { nameof(Quantity), nameof(UnitPrice) });
         }
-
-        return results;
     }
 }
