@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>ManyResultsBenchmarks-20260513-170533</title>
+
+<style type="text/css">
+	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+	td, th { padding: 6px 13px; border: 1px solid #ddd; text-align: right; }
+	tr { background-color: #fff; border-top: 1px solid #ccc; }
+	tr:nth-child(even) { background: #f8f8f8; }
+</style>
+</head>
+<body>
+<pre><code>
+BenchmarkDotNet v0.14.0, Windows 11 (10.0.26100.8390) (Hyper-V)
+Unknown processor
+.NET SDK 11.0.100-preview.5.26227.104
+  [Host]     : .NET 11.0.0 (11.0.26.22804), X64 RyuJIT AVX2
+  DefaultJob : .NET 11.0.0 (11.0.26.22804), X64 RyuJIT AVX2
+</code></pre>
+<pre><code></code></pre>
+
+<table>
+<thead><tr><th>Method</th><th>N</th><th>Mean  </th><th>Ratio</th><th>Gen0</th><th>Allocated</th><th>Alloc Ratio</th>
+</tr>
+</thead><tbody><tr><td>Batch</td><td>0</td><td>51.24 ns</td><td>1.00</td><td>0.0134</td><td>224 B</td><td>1.00</td>
+</tr><tr><td>Stream</td><td>0</td><td>62.57 ns</td><td>1.22</td><td>0.0181</td><td>304 B</td><td>1.36</td>
+</tr><tr><td>Batch</td><td>1</td><td>2,665.30 ns</td><td>1.00</td><td>0.0381</td><td>637 B</td><td>1.00</td>
+</tr><tr><td>Stream</td><td>1</td><td>2,802.14 ns</td><td>1.06</td><td>0.0381</td><td>673 B</td><td>1.06</td>
+</tr><tr><td>Batch</td><td>5</td><td>2,834.00 ns</td><td>1.00</td><td>0.0610</td><td>1049 B</td><td>1.00</td>
+</tr><tr><td>Stream</td><td>5</td><td>6,503.80 ns</td><td>2.30</td><td>0.0610</td><td>1072 B</td><td>1.02</td>
+</tr><tr><td>Batch</td><td>20</td><td>6,799.33 ns</td><td>1.00</td><td>0.1526</td><td>2680 B</td><td>1.00</td>
+</tr><tr><td>Stream</td><td>20</td><td>23,676.60 ns</td><td>3.48</td><td>0.1221</td><td>2584 B</td><td>0.96</td>
+</tr><tr><td>Batch</td><td>50</td><td>14,877.87 ns</td><td>1.00</td><td>0.3052</td><td>5627 B</td><td>1.00</td>
+</tr><tr><td>Stream</td><td>50</td><td>50,870.83 ns</td><td>3.42</td><td>0.2441</td><td>5280 B</td><td>0.94</td>
+</tr></tbody></table>
+</body>
+</html>

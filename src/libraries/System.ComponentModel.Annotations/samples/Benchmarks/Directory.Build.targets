@@ -1,0 +1,3 @@
+<Project>
+  <!-- Override the runtime repo's Directory.Build.targets for this standalone benchmark project -->
+</Project>
