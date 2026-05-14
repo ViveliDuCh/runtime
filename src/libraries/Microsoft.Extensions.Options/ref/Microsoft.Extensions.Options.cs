@@ -11,6 +11,7 @@ namespace Microsoft.Extensions.DependencyInjection
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStart<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
 #if NET11_0_OR_GREATER
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStartAsync<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
+        public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> RevalidateOnChangeAsync<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder, System.Action<Microsoft.Extensions.Options.OptionsValidationException>? onRevalidationFailed = null) where TOptions : class { throw null; }
 #endif
     }
     public static partial class OptionsServiceCollectionExtensions
@@ -131,6 +132,9 @@ namespace Microsoft.Extensions.Options
         TOptions CurrentValue { get; }
         TOptions Get(string? name);
         System.IDisposable? OnChange(System.Action<TOptions, string?> listener);
+#if NET11_0_OR_GREATER
+        System.IDisposable? OnChangeAsync(System.Func<TOptions, string?, System.Threading.CancellationToken, System.Threading.Tasks.Task> listener) { throw null; }
+#endif
     }
     public partial interface IOptionsSnapshot<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] out TOptions> : Microsoft.Extensions.Options.IOptions<TOptions> where TOptions : class
     {
@@ -244,6 +248,9 @@ namespace Microsoft.Extensions.Options
         public void Dispose() { }
         public virtual TOptions Get(string? name) { throw null; }
         public System.IDisposable OnChange(System.Action<TOptions, string> listener) { throw null; }
+#if NET11_0_OR_GREATER
+        public System.IDisposable OnChangeAsync(System.Func<TOptions, string?, System.Threading.CancellationToken, System.Threading.Tasks.Task> listener) { throw null; }
+#endif
     }
     public partial class OptionsValidationException : System.Exception
     {
