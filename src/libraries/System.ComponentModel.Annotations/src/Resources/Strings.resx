@@ -129,6 +129,9 @@
   <data name="FileExtensionsAttribute_Invalid" xml:space="preserve">
     <value>The {0} field only accepts files with the following extensions: {1}</value>
   </data>
+  <data name="IAsyncValidatableObject_RequiresAsync" xml:space="preserve">
+    <value>This object implements IAsyncValidatableObject and supports only asynchronous validation. Use the async Validator methods (e.g. TryValidateObjectAsync, ValidateObjectAsync) instead of their synchronous counterparts.</value>
+  </data>
   <data name="LocalizableString_LocalizationFailed" xml:space="preserve">
     <value>Cannot retrieve property '{0}' because localization failed.  Type '{1}' is not public or does not contain a public static string property with the name '{2}'.</value>
   </data>

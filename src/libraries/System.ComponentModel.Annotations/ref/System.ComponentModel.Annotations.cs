@@ -205,8 +205,9 @@ namespace System.ComponentModel.DataAnnotations
         protected override System.ComponentModel.DataAnnotations.ValidationResult? IsValid(object? value, System.ComponentModel.DataAnnotations.ValidationContext validationContext) { throw null; }
         protected abstract System.Threading.Tasks.ValueTask<System.ComponentModel.DataAnnotations.ValidationResult?> IsValidAsync(object? value, System.ComponentModel.DataAnnotations.ValidationContext validationContext, System.Threading.CancellationToken cancellationToken);
     }
-    public partial interface IAsyncValidatableObject
+    public partial interface IAsyncValidatableObject : System.ComponentModel.DataAnnotations.IValidatableObject
     {
+        System.Collections.Generic.IEnumerable<System.ComponentModel.DataAnnotations.ValidationResult> System.ComponentModel.DataAnnotations.IValidatableObject.Validate(System.ComponentModel.DataAnnotations.ValidationContext validationContext) { throw null; }
         System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<System.ComponentModel.DataAnnotations.ValidationResult>> ValidateAsync(System.ComponentModel.DataAnnotations.ValidationContext validationContext, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
     }
     public partial interface IValidatableObject
