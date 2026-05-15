@@ -3,6 +3,8 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.Options
 {
@@ -30,5 +32,16 @@ namespace Microsoft.Extensions.Options
         /// <param name="listener">The action to be invoked when <typeparamref name="TOptions"/> has changed.</param>
         /// <returns>An <see cref="IDisposable"/> that should be disposed to stop listening for changes.</returns>
         IDisposable? OnChange(Action<TOptions, string?> listener);
+
+#if NET11_0_OR_GREATER
+        /// <summary>
+        /// Registers an asynchronous listener to be called whenever a named
+        /// <typeparamref name="TOptions"/> changes. Async listeners execute
+        /// after all synchronous <see cref="OnChange"/> listeners.
+        /// </summary>
+        /// <param name="listener">The async callback invoked when options change.</param>
+        /// <returns>An <see cref="IDisposable"/> that should be disposed to stop listening.</returns>
+        IDisposable? OnChangeAsync(Func<TOptions, string?, CancellationToken, Task> listener) => null;
+#endif
     }
 }

@@ -92,6 +92,41 @@ namespace Microsoft.Extensions.DependencyInjection
 
             return optionsBuilder;
         }
+
+        /// <summary>
+        /// Registers an <see cref="IOptionsMonitor{TOptions}.OnChangeAsync"/> listener
+        /// that re-runs all <see cref="IAsyncValidateOptions{TOptions}"/> validators
+        /// whenever the configuration source changes.
+        /// </summary>
+        /// <typeparam name="TOptions">The type of options.</typeparam>
+        /// <param name="optionsBuilder">The options builder.</param>
+        /// <param name="onRevalidationFailed">
+        /// Optional callback invoked when re-validation fails.
+        /// Receives the <see cref="OptionsValidationException"/> so the app can log,
+        /// raise an alert, or take corrective action.
+        /// If <see langword="null"/>, failures are silently swallowed.
+        /// </param>
+        /// <returns>The <see cref="OptionsBuilder{TOptions}"/> for chaining.</returns>
+        public static OptionsBuilder<TOptions> RevalidateOnChangeAsync<
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(
+            this OptionsBuilder<TOptions> optionsBuilder,
+            Action<OptionsValidationException>? onRevalidationFailed = null)
+            where TOptions : class
+        {
+            ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+            string name = optionsBuilder.Name;
+            optionsBuilder.Services.AddSingleton(sp =>
+            {
+                var monitor = sp.GetRequiredService<IOptionsMonitor<TOptions>>();
+                var validators = sp.GetRequiredService<IEnumerable<IAsyncValidateOptions<TOptions>>>();
+
+                return new OptionsRevalidationRegistration<TOptions>(
+                    monitor, validators, name, onRevalidationFailed);
+            });
+
+            return optionsBuilder;
+        }
 #endif
     }
 }
