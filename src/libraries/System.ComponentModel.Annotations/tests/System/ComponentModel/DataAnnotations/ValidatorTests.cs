@@ -1631,9 +1631,10 @@ namespace System.ComponentModel.DataAnnotations.Tests
             }
         }
 
-        public class DualValidatableModel : IValidatableObject, IAsyncValidatableObject
+        public class DualValidatableModel : IAsyncValidatableObject
         {
-            public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+            // Explicitly provides Validate() to override the DIM
+            IEnumerable<ValidationResult> IValidatableObject.Validate(ValidationContext validationContext)
             {
                 return new ValidationResult[] { new ValidationResult("sync error from dual model") };
             }
@@ -2646,6 +2647,33 @@ namespace System.ComponentModel.DataAnnotations.Tests
             var attrs = new ValidationAttribute[] { new AsyncAlwaysFailsAttribute(), new AsyncAlwaysFailsAttribute() };
             Assert.False(await Validator.TryValidateValueAsync("anything", ctx, results, attrs));
             Assert.Equal(2, results.Count);
+        }
+
+        [Fact]
+        public static void TryValidateObject_IAsyncValidatableObject_SyncPath_ThrowsNotSupported()
+        {
+            var instance = new AsyncValidatableError();
+            var ctx = new ValidationContext(instance);
+            var results = new List<ValidationResult>();
+            Assert.Throws<NotSupportedException>(
+                () => Validator.TryValidateObject(instance, ctx, results));
+        }
+
+        [Fact]
+        public static void TryValidateObject_DualModel_SyncPath_UsesExplicitValidate()
+        {
+            var instance = new DualValidatableModel();
+            var ctx = new ValidationContext(instance);
+            var results = new List<ValidationResult>();
+            Assert.False(Validator.TryValidateObject(instance, ctx, results));
+            Assert.Equal("sync error from dual model", Assert.Single(results).ErrorMessage);
+        }
+
+        [Fact]
+        public static void IAsyncValidatableObject_InheritsIValidatableObject()
+        {
+            var instance = new AsyncValidatableSuccess();
+            Assert.IsAssignableFrom<IValidatableObject>(instance);
         }
     }
 }

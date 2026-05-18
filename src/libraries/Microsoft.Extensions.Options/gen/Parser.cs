@@ -752,6 +752,15 @@ namespace Microsoft.Extensions.Options.Generators
 
         private bool ModelSelfValidates(ITypeSymbol modelType)
         {
+            // If the type implements IAsyncValidatableObject, IValidatableObject is present
+            // via inheritance but only as a DIM that throws. Don't count it as sync
+            // self-validation — the sync pipeline should not call the DIM, and the async
+            // pipeline handles these types via ModelSelfValidatesAsync instead.
+            if (ModelSelfValidatesAsync(modelType))
+            {
+                return false;
+            }
+
             foreach (var implementingInterface in modelType.AllInterfaces)
             {
                 if (SymbolEqualityComparer.Default.Equals(implementingInterface.OriginalDefinition, _symbolHolder.IValidatableObjectSymbol))
