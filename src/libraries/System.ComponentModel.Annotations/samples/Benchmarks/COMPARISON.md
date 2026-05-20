@@ -15,6 +15,16 @@ the return type of `IAsyncValidatableObject.ValidateAsync()`:
 
 This document presents the methodology, rationale, benchmark results, and a recommendation.
 
+### Design History
+
+The [original design gist](https://gist.github.com/halter73/f4d0974da579fb78d17bd2e6d9f78173) by Chris Halter (halter73) chose `IAsyncEnumerable<ValidationResult>` as the return type for `IAsyncValidatableObject.ValidateAsync()`:
+
+> `IAsyncValidatableObject` Returns `IAsyncEnumerable` — Allows streaming results and is aligned with the pattern where validation may involve multiple async checks. If deemed too complex for V1, `Task<IEnumerable<ValidationResult>>` is an acceptable simplification.
+
+The gist also included a TODO: *"IAsyncEnumerable API to get validation results ASAP"*, indicating that streaming was considered a feature goal, not an alternative to be benchmarked away.
+
+This benchmark comparison should be read in that context: it evaluates whether the V1 simplification (batch) is justified on performance grounds, not whether streaming is architecturally unnecessary.
+
 ---
 
 ## Methodology
@@ -73,8 +83,10 @@ Following the [API proposal scenarios](https://github.com/dotnet/runtime/issues/
 1. **Simpler implementation**: Standard async/await pattern — return a list, no async iterator state machine.
 2. **Lower overhead for common case**: Validation typically produces 0–3 errors. `ValueTask` wrapping a `List<T>`
    avoids the async enumerator machinery.
-3. **Symmetry with sync API**: `IValidatableObject.Validate()` returns `IEnumerable<ValidationResult>` —
-   the async counterpart naturally wraps it in `ValueTask<>`.
+3. **Familiar async pattern**: The `ValueTask<IEnumerable<>>` pattern uses standard `await` + `foreach`,
+   which may be more familiar to developers than `await foreach`. However, note that `IAsyncEnumerable<T>`
+   is the language-level async counterpart to `IEnumerable<T>` (the sync return type of
+   `IValidatableObject.Validate()`), so either can claim symmetry depending on perspective.
 4. **Allocation-efficient for few results**: A pre-sized `List<T>` + `ValueTask<T>` struct is cheaper than
    the `IAsyncEnumerator<T>` state machine for small result counts.
 5. **No consumer complexity**: Callers use standard `await` + `foreach`, no `await foreach` needed.
@@ -89,8 +101,11 @@ Following the [API proposal scenarios](https://github.com/dotnet/runtime/issues/
    validation rarely produces large result sets).
 4. **Modern C# idiom**: Aligns with `IAsyncEnumerable<T>` adoption across the BCL (e.g., `Channel.ReadAllAsync`,
    EF Core queries).
-5. **Early termination potential**: A consumer could `break` out of `await foreach` and skip remaining checks
-   (though `Validator.cs` currently collects all errors).
+5. **Early termination and cancellation efficiency**: Consumers can `break` out of `await foreach`
+   to skip remaining checks — useful for "fail-fast" validation modes. Combined with `CancellationToken`
+   support (which is core to the async validation design), streaming means partial results are preserved
+   when validation is cancelled (e.g., user navigates away). With batch, cancellation before completion
+   discards all work.
 
 ---
 
@@ -168,6 +183,24 @@ Results grouped by category. **Batch** (`ValueTask<IEnumerable<>>`) is the basel
 | Batch | 8.406 μs | 1.00 | 2.34 KB | 1.00 |
 | Stream | 12.065 μs | 1.44 | 2.38 KB | 1.02 |
 
+### Context: What the Benchmarks Don't Measure
+
+These benchmarks measure the **overhead of the return-type machinery** (iterator state machines, ValueTask wrapping, list allocation) in isolation — using `Task.Yield()` to simulate minimal async context switches. This is valuable for understanding the cost of the abstraction itself.
+
+However, the primary scenario for async validation involves **real I/O** (database uniqueness checks, API availability calls) at 10–500ms per check. In that context:
+
+| Metric | Batch overhead | Stream overhead | I/O latency (per check) |
+|--------|---------------|-----------------|------------------------|
+| Order (valid) | 3.3 μs | 3.8 μs | 50,000–200,000 μs |
+
+The ~0.5 μs difference is **0.001–0.0025%** of a single I/O call.
+
+Additionally, for UI consumers, the relevant metric is **time-to-first-error-displayed**. With 5 independent async checks at 100ms each:
+- **Batch**: first error displayed at ~500ms (after all checks complete)
+- **Stream**: first error displayed at ~100ms (as each check completes)
+
+This 5× improvement in perceived responsiveness is not captured by throughput benchmarks.
+
 ---
 
 ## Analysis
@@ -198,7 +231,7 @@ Results grouped by category. **Batch** (`ValueTask<IEnumerable<>>`) is the basel
 |--------|:--:|:--:|
 | Implementer pattern | `async ValueTask<IEnumerable<>>` + `List<T>` | `async IAsyncEnumerable<>` + `yield return` |
 | Consumer pattern | `await` + `foreach` | `await foreach` |
-| Sync fallback | Easy (`.Result` on `ValueTask`) | Requires `ToListAsync()` helper |
+| Sync fallback | `.Result` on `ValueTask` (⚠️ risk of deadlocks in UI contexts; not recommended) | Requires `ToListAsync()` helper or sync enumeration wrapper |
 | Cancellation | `CancellationToken` parameter | `[EnumeratorCancellation]` attribute required |
 | Symmetry with `IValidatableObject` | Direct (wraps `IEnumerable<>` in `ValueTask<>`) | Different pattern |
 | NativeAOT/trimming | No special concerns | Async iterators may generate more code |
@@ -214,9 +247,16 @@ Results grouped by category. **Batch** (`ValueTask<IEnumerable<>>`) is the basel
    The microsecond-level overhead difference between the two patterns is negligible compared to
    I/O latency.
 
-3. **Streaming has no practical benefit here**: The `Validator.cs` consumer always collects all
-   errors before returning. There's no early-termination or progressive-display scenario in the
-   validation pipeline.
+3. **Streaming enables progressive display in UI consumers**: While the current `Validator.cs`
+   implementation collects all errors before returning, the async validation API is consumed by
+   UI-heavy frameworks — most notably Blazor, where `EditContext` and `ValidationMessageStore`
+   already support per-field validation state. Streaming allows errors to appear in the UI as each
+   async check completes (e.g., a database uniqueness check on one field resolving before an API
+   availability check on another), reducing perceived latency. Five major Blazor component vendors
+   (MudBlazor, Radzen, Telerik, Syncfusion, DevExpress) build on this infrastructure and would
+   inherit streaming capability. Additionally, cancellation tokens combined with streaming mean less
+   wasted work when a user navigates away mid-validation — results already yielded are usable,
+   whereas batch discards all work if cancelled before completion.
 
 4. **`IAsyncEnumerable<T>` adds consumer complexity**: Every consumer of the interface must use
    `await foreach` or manually manage `IAsyncEnumerator<T>`. The Batch pattern's simpler
@@ -226,9 +266,25 @@ Results grouped by category. **Batch** (`ValueTask<IEnumerable<>>`) is the basel
 
 ## Conclusion & Recommendation
 
-**Recommendation: Use `ValueTask<IEnumerable<ValidationResult>>` (Batch pattern).**
+**Recommendation: The choice depends on whether V1 simplicity or long-term API flexibility is prioritized.**
 
-The Batch pattern is the right choice for `IAsyncValidatableObject.ValidateAsync()` because:
+- **If shipping V1 with minimal complexity is the priority**: Use `ValueTask<IEnumerable<ValidationResult>>`
+  (batch). It is simpler to implement and consume, has lower overhead in micro-benchmarks, and the original
+  design gist acknowledges it as an "acceptable simplification." A streaming `ValidateAsyncStreaming()` method
+  could be added later.
+
+- **If the API contract should enable progressive UI display from day one**: Use
+  `IAsyncEnumerable<ValidationResult>` (streaming). This was the original design intent, enables Blazor and
+  component vendors to display errors as they resolve, combines naturally with `CancellationToken` for
+  partial-result preservation, and is the idiomatic C# async counterpart to the sync
+  `IEnumerable<ValidationResult>` return type. The overhead at realistic error counts (0–5) is 1–15% —
+  negligible compared to the I/O latency that motivates async validation in the first place.
+
+The benchmarks demonstrate that batch has lower raw overhead. They do not demonstrate that streaming has
+"no practical benefit" — that claim is contradicted by the Blazor consumer ecosystem and the original
+design gist.
+
+The Batch pattern has these strengths for `IAsyncValidatableObject.ValidateAsync()`:
 
 1. **Performance**: Batch is consistently faster (8–44% in typical scenarios) and dramatically
    faster (2.3–3.5x) when many validation results are produced. The `IAsyncEnumerable` iterator
@@ -237,26 +293,37 @@ The Batch pattern is the right choice for `IAsyncValidatableObject.ValidateAsync
 2. **Allocations**: Memory usage is comparable or slightly better with Batch for typical
    validation scenarios (0–5 errors).
 
-3. **Simplicity**: The Batch pattern aligns with the existing `IValidatableObject.Validate()`
-   return type (`IEnumerable<ValidationResult>`), making it the natural async extension.
-   Implementers use a straightforward `List<T>` collection pattern. Consumers use standard
-   `await` + `foreach`.
+3. **Simplicity**: The Batch pattern uses a straightforward `List<T>` collection pattern with standard
+   `await` + `foreach`, which may be more familiar to developers. However, `IAsyncEnumerable<T>` is the
+   language-level async counterpart to `IEnumerable<T>` (the sync return type), so either pattern can
+   claim alignment with `IValidatableObject.Validate()`.
 
-4. **No streaming benefit**: The validation pipeline collects all errors before returning them
-   to the caller. `IAsyncEnumerable<T>`'s streaming capability goes unused.
+4. **Streaming benefit is consumer-dependent**: The `Validator.cs` internal pipeline collects all
+   errors before returning, so streaming provides no benefit at that layer. However, UI consumers
+   like Blazor's `EditContext`/`ValidationMessageStore` and the five major component vendors that
+   build on it (MudBlazor, Radzen, Telerik, Syncfusion, DevExpress) can leverage streaming for
+   progressive error display. The design gist explicitly chose `IAsyncEnumerable` for this reason:
+   *"Allows streaming results and is aligned with the pattern where validation may involve multiple
+   async checks."*
 
 5. **Ecosystem fit**: `ValueTask<IEnumerable<>>` follows established BCL patterns for async
    methods that return collections (e.g., `HttpClient.GetStringAsync()` returns `Task<string>`,
    not `IAsyncEnumerable<char>`).
 
-The `IAsyncEnumerable<T>` approach would be advantageous if:
-- The consumer could act on partial results (e.g., displaying errors progressively in a UI)
-- Validation produced large result sets where memory pressure matters
-- Early termination (stop validating after first error) was a common pattern
+The `IAsyncEnumerable<T>` approach is advantageous when:
+- The consumer can act on partial results (e.g., displaying errors progressively in a UI) — **this
+  applies to Blazor and its component vendor ecosystem**, which is a primary consumer of async validation
+- Validation involves multiple independent async checks where time-to-first-result matters — **this is
+  the core scenario for async validation** (database lookups, API calls)
+- Cancellation should preserve partial work rather than discard everything — **this applies when
+  `CancellationToken` is used**, which is integral to the async validation design
 
-None of these apply to the current `Validator.cs` design. If future scenarios require streaming
-(e.g., a reactive UI framework), a separate `ValidateAsyncStreaming()` method could be added
-without changing the primary interface.
+The `Validator.cs` internal implementation currently collects all errors, so batch is sufficient at that
+layer. However, the API contract on `IAsyncValidatableObject` shapes what *all* consumers can do —
+including UI frameworks that benefit from streaming. This was recognized in the
+[original design gist](https://gist.github.com/halter73/f4d0974da579fb78d17bd2e6d9f78173):
+*"If deemed too complex for V1, `Task<IEnumerable<ValidationResult>>` is an acceptable simplification"*
+— framing batch as the simplification, not the ideal.
 
 ---
 
