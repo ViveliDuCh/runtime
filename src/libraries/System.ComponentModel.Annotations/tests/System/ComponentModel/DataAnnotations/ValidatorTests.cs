@@ -2652,12 +2652,12 @@ namespace System.ComponentModel.DataAnnotations.Tests
         }
 
         [Fact]
-        public static void TryValidateObject_IAsyncValidatableObject_SyncPath_ThrowsNotSupported()
+        public static void TryValidateObject_IAsyncValidatableObject_SyncPath_ThrowsInvalidOperation()
         {
             var instance = new AsyncValidatableError();
             var ctx = new ValidationContext(instance);
             var results = new List<ValidationResult>();
-            Assert.Throws<NotSupportedException>(
+            Assert.Throws<InvalidOperationException>(
                 () => Validator.TryValidateObject(instance, ctx, results));
         }
 

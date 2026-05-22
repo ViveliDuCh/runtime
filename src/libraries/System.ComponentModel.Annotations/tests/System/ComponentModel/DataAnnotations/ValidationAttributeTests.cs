@@ -396,11 +396,11 @@ namespace System.ComponentModel.DataAnnotations.Tests
         }
 
         [Fact]
-        public static void AsyncValidationAttribute_IsValid_ThrowsNotSupportedException()
+        public static void AsyncValidationAttribute_IsValid_ThrowsInvalidOperationException()
         {
             var attribute = new TestAsyncAlwaysFailsAttribute();
             var context = new ValidationContext(new object());
-            var ex = Assert.Throws<NotSupportedException>(() => attribute.GetValidationResult("test", context));
+            var ex = Assert.Throws<InvalidOperationException>(() => attribute.GetValidationResult("test", context));
             Assert.Contains(nameof(TestAsyncAlwaysFailsAttribute), ex.Message);
         }
 
@@ -409,7 +409,7 @@ namespace System.ComponentModel.DataAnnotations.Tests
         {
             var attribute = new TestAsyncAlwaysFailsAttribute();
             var context = new ValidationContext(new object());
-            var ex = Assert.Throws<NotSupportedException>(() => attribute.GetValidationResult("test", context));
+            var ex = Assert.Throws<InvalidOperationException>(() => attribute.GetValidationResult("test", context));
             Assert.Contains("TryValidateObjectAsync", ex.Message);
             Assert.Contains("TryValidatePropertyAsync", ex.Message);
             Assert.Contains("TryValidateValueAsync", ex.Message);
@@ -611,7 +611,7 @@ namespace System.ComponentModel.DataAnnotations.Tests
         public static void AsyncValidationAttribute_Constructor_WithErrorMessage()
         {
             var attribute = new TestAsyncWithMessage("Custom error");
-            var ex = Assert.Throws<NotSupportedException>(
+            var ex = Assert.Throws<InvalidOperationException>(
                 () => attribute.GetValidationResult("any", s_testValidationContext));
             Assert.Contains(nameof(TestAsyncWithMessage), ex.Message);
         }

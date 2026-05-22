@@ -39,12 +39,12 @@ namespace System.ComponentModel.DataAnnotations
 
         /// <summary>
         ///     Override of the base class <see cref="ValidationAttribute.IsValid(object?, ValidationContext)" /> method.
-        ///     By default, throws <see cref="NotSupportedException" /> to indicate that this attribute requires
+        ///     By default, throws <see cref="InvalidOperationException" /> to indicate that this attribute requires
         ///     asynchronous validation. Subclasses may override to provide a synchronous fallback.
         /// </summary>
         protected override ValidationResult? IsValid(object? value, ValidationContext validationContext)
         {
-            throw new NotSupportedException(
+            throw new InvalidOperationException(
                 SR.Format(SR.AsyncValidationAttribute_RequiresAsync, GetType().Name));
         }
 
