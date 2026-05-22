@@ -3,7 +3,6 @@
 
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace System.ComponentModel.DataAnnotations
 {
@@ -25,8 +24,11 @@ namespace System.ComponentModel.DataAnnotations
             throw new NotSupportedException(SR.IAsyncValidatableObject_RequiresAsync);
 
         /// <summary>
-        ///     Determines whether the specified object is valid asynchronously.
+        ///     Determines whether the specified object is valid asynchronously, yielding
+        ///     validation results as each check completes.
         /// </summary>
-        ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext, CancellationToken cancellationToken = default);
+        IAsyncEnumerable<ValidationResult> ValidateAsync(
+            ValidationContext validationContext,
+            CancellationToken cancellationToken = default);
     }
 }

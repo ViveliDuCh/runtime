@@ -11,7 +11,6 @@ namespace Microsoft.Extensions.DependencyInjection
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStart<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
 #if NET11_0_OR_GREATER
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStartAsync<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
-        public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> RevalidateOnChangeAsync<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder, System.Action<Microsoft.Extensions.Options.OptionsValidationException>? onRevalidationFailed = null) where TOptions : class { throw null; }
 #endif
     }
     public static partial class OptionsServiceCollectionExtensions
@@ -132,9 +131,6 @@ namespace Microsoft.Extensions.Options
         TOptions CurrentValue { get; }
         TOptions Get(string? name);
         System.IDisposable? OnChange(System.Action<TOptions, string?> listener);
-#if NET11_0_OR_GREATER
-        System.IDisposable? OnChangeAsync(System.Func<TOptions, string?, System.Threading.CancellationToken, System.Threading.Tasks.Task> listener) { throw null; }
-#endif
     }
     public partial interface IOptionsSnapshot<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] out TOptions> : Microsoft.Extensions.Options.IOptions<TOptions> where TOptions : class
     {
@@ -160,6 +156,12 @@ namespace Microsoft.Extensions.Options
     public partial interface IAsyncValidateOptions<in TOptions> where TOptions : class
     {
         System.Threading.Tasks.ValueTask<Microsoft.Extensions.Options.ValidateOptionsResult> ValidateAsync(string? name, TOptions options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+    }
+    [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Never)]
+    public sealed partial class AsyncValidationState
+    {
+        [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Never)]
+        public bool StartupValidatorRegistered { get; set; }
     }
 #endif
     public partial interface IValidateOptions<TOptions> where TOptions : class
@@ -214,6 +216,8 @@ namespace Microsoft.Extensions.Options
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull { throw null; }
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
         public virtual Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateAsync<TDep1, TDep2, TDep3, TDep4, TDep5>(System.Func<TOptions, TDep1, TDep2, TDep3, TDep4, TDep5, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> validation, string failureMessage) where TDep1 : notnull where TDep2 : notnull where TDep3 : notnull where TDep4 : notnull where TDep5 : notnull { throw null; }
+        [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Never)]
+        public void RegisterAsyncValidationGuard() { }
 #endif
     }
     public partial class OptionsCache<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions> : Microsoft.Extensions.Options.IOptionsMonitorCache<TOptions> where TOptions : class
@@ -248,9 +252,6 @@ namespace Microsoft.Extensions.Options
         public void Dispose() { }
         public virtual TOptions Get(string? name) { throw null; }
         public System.IDisposable OnChange(System.Action<TOptions, string> listener) { throw null; }
-#if NET11_0_OR_GREATER
-        public System.IDisposable OnChangeAsync(System.Func<TOptions, string?, System.Threading.CancellationToken, System.Threading.Tasks.Task> listener) { throw null; }
-#endif
     }
     public partial class OptionsValidationException : System.Exception
     {

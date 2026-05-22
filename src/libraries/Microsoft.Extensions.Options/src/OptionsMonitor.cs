@@ -23,9 +23,6 @@ namespace Microsoft.Extensions.Options
         private readonly IOptionsFactory<TOptions> _factory;
         private readonly List<IDisposable> _registrations = new List<IDisposable>();
         internal event Action<TOptions, string>? _onChange;
-#if NET11_0_OR_GREATER
-        internal event Func<TOptions, string, CancellationToken, Task>? _onChangeAsync;
-#endif
 
         /// <summary>
         /// Initializes a new instance of <see cref="OptionsMonitor{TOptions}"/> with the specified factory, sources, and cache.
@@ -66,28 +63,12 @@ namespace Microsoft.Extensions.Options
             }
         }
 
-        private async void InvokeChanged(string? name)
+        private void InvokeChanged(string? name)
         {
             name ??= Options.DefaultName;
             _cache.TryRemove(name);
             TOptions options = Get(name);
             _onChange?.Invoke(options, name);
-
-#if NET11_0_OR_GREATER
-            Func<TOptions, string, CancellationToken, Task>? asyncHandler = _onChangeAsync;
-            if (asyncHandler is not null)
-            {
-                try
-                {
-                    await asyncHandler(options, name, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (OptionsValidationException)
-                {
-                    // Re-validation failed — async listeners handle this via callbacks.
-                    // We don't throw from a fire-and-forget change notification.
-                }
-            }
-#endif
         }
 
         /// <summary>
@@ -134,21 +115,6 @@ namespace Microsoft.Extensions.Options
             return disposable;
         }
 
-#if NET11_0_OR_GREATER
-        /// <summary>
-        /// Registers an asynchronous listener to be called whenever <typeparamref name="TOptions"/> changes.
-        /// Async listeners execute after all synchronous <see cref="OnChange"/> listeners.
-        /// </summary>
-        /// <param name="listener">The async callback invoked when options change.</param>
-        /// <returns>An <see cref="IDisposable"/> that should be disposed to stop listening.</returns>
-        public IDisposable OnChangeAsync(Func<TOptions, string?, CancellationToken, Task> listener)
-        {
-            var disposable = new AsyncChangeTrackerDisposable(this, listener);
-            _onChangeAsync += disposable.OnChangeAsync;
-            return disposable;
-        }
-#endif
-
         /// <summary>
         /// Removes all change registration subscriptions.
         /// </summary>
@@ -178,17 +144,5 @@ namespace Microsoft.Extensions.Options
 
             public void Dispose() => _monitor._onChange -= OnChange;
         }
-
-#if NET11_0_OR_GREATER
-        internal sealed class AsyncChangeTrackerDisposable(
-            OptionsMonitor<TOptions> monitor,
-            Func<TOptions, string?, CancellationToken, Task> listener) : IDisposable
-        {
-            public Task OnChangeAsync(TOptions options, string name, CancellationToken ct)
-                => listener(options, name, ct);
-
-            public void Dispose() => monitor._onChangeAsync -= OnChangeAsync;
-        }
-#endif
     }
 }

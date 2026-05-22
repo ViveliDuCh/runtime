@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -23,18 +24,16 @@ public class MoneyTransfer : IAsyncValidatableObject
     [Range(0.01, double.MaxValue, ErrorMessage = "Transfer amount must be positive.")]
     public decimal Amount { get; set; }
 
-    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
+    public async IAsyncEnumerable<ValidationResult> ValidateAsync(
         ValidationContext validationContext,
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var results = new List<ValidationResult>();
-
         // Cross property check, no I/O needed
         if (FromAccount == ToAccount)
         {
-            results.Add(new ValidationResult(
+            yield return new ValidationResult(
                 "Cannot transfer to the same account.",
-                new[] { nameof(FromAccount), nameof(ToAccount) }));
+                new[] { nameof(FromAccount), nameof(ToAccount) });
         }
 
         // Simulate async balance check
@@ -43,11 +42,9 @@ public class MoneyTransfer : IAsyncValidatableObject
 
         if (Amount > balance)
         {
-            results.Add(new ValidationResult(
+            yield return new ValidationResult(
                 $"Insufficient funds. Balance: ${balance:F2}, Transfer: ${Amount:F2}.",
-                new[] { nameof(Amount) }));
+                new[] { nameof(Amount) });
         }
-
-        return results;
     }
 }

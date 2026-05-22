@@ -414,8 +414,20 @@ namespace System.ComponentModel.DataAnnotations
         ///     is <c>true</c>, this method will also evaluate the <see cref="ValidationAttribute" />s for all the immediate
         ///     properties of this object.  This process is not recursive.
         ///     <para>
-        ///         Any <see cref="AsyncValidationAttribute" /> instances will be evaluated asynchronously after all synchronous
-        ///         validation attributes have passed.
+        ///         When <paramref name="validateAllProperties" /> is <c>true</c>, properties are validated
+        ///         in parallel. Within each property, synchronous attributes run first; asynchronous
+        ///         attributes run only if all synchronous attributes pass.
+        ///     </para>
+        ///     <para>
+        ///         When <paramref name="validationResults" /> is <c>null</c>, validation stops after the
+        ///         first property error (cross-property short-circuit). Any in-flight async validators on
+        ///         other properties are cancelled cooperatively. When <paramref name="validationResults" />
+        ///         is non-null, all properties complete and all errors are collected.
+        ///     </para>
+        ///     <para>
+        ///         Returns <see cref="ValueTask{TResult}" /> because most callers consume the result via a
+        ///         single <c>await</c>. Orchestration layers that validate multiple objects in parallel
+        ///         should use <see cref="ValueTask{TResult}.AsTask" /> for <c>Task.WhenAll</c> composition.
         ///     </para>
         /// </remarks>
         /// <param name="instance">The object instance to test.  It cannot be null.</param>
@@ -662,16 +674,11 @@ namespace System.ComponentModel.DataAnnotations
             // Step 3: Test for IAsyncValidatableObject implementation (preferred), fall back to IValidatableObject
             if (instance is IAsyncValidatableObject asyncValidatable)
             {
-                IEnumerable<ValidationResult> results = await asyncValidatable.ValidateAsync(validationContext, cancellationToken).ConfigureAwait(false);
-
-                if (results != null)
+                await foreach (ValidationResult result in asyncValidatable.ValidateAsync(validationContext, cancellationToken).ConfigureAwait(false))
                 {
-                    foreach (ValidationResult result in results)
+                    if (result != ValidationResult.Success)
                     {
-                        if (result != ValidationResult.Success)
-                        {
-                            errors.Add(new ValidationError(null, instance, result));
-                        }
+                        errors.Add(new ValidationError(null, instance, result));
                     }
                 }
             }
@@ -711,21 +718,42 @@ namespace System.ComponentModel.DataAnnotations
 
             if (validateAllProperties)
             {
-                // Start all property validations in parallel
-                var tasks = new List<Task<List<ValidationError>>>(properties.Count);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                var tasks = new HashSet<Task<List<ValidationError>>>(properties.Count);
                 foreach (var property in properties)
                 {
                     var attributes = _store.GetPropertyValidationAttributes(property.Key);
                     tasks.Add(GetValidationErrorsAsync(
                         property.Value, property.Key, attributes,
-                        breakOnFirstError, cancellationToken).AsTask());
+                        breakOnFirstError, linkedCts.Token).AsTask());
                 }
 
-                // Await all and collect errors
-                List<ValidationError>[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                foreach (List<ValidationError> propertyErrors in results)
+                while (tasks.Count > 0)
                 {
-                    errors.AddRange(propertyErrors);
+                    Task<List<ValidationError>> completed = await Task.WhenAny(tasks).ConfigureAwait(false);
+                    tasks.Remove(completed);
+
+                    List<ValidationError> propertyErrors;
+                    try
+                    {
+                        propertyErrors = await completed.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (linkedCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    {
+                        continue;
+                    }
+
+                    if (propertyErrors.Count > 0)
+                    {
+                        errors.AddRange(propertyErrors);
+
+                        if (breakOnFirstError)
+                        {
+                            linkedCts.Cancel();
+                            break;
+                        }
+                    }
                 }
             }
             else

@@ -45,6 +45,7 @@ namespace Microsoft.Extensions.DependencyInjection
         public static OptionsBuilder<TOptions> ValidateDataAnnotationsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicProperties)] TOptions>(this OptionsBuilder<TOptions> optionsBuilder) where TOptions : class
         {
             optionsBuilder.Services.AddSingleton<IAsyncValidateOptions<TOptions>>(new DataAnnotationValidateOptionsAsync<TOptions>(optionsBuilder.Name));
+            optionsBuilder.RegisterAsyncValidationGuard();
             return optionsBuilder;
         }
 #endif

@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.Options
 {
@@ -593,7 +594,22 @@ namespace Microsoft.Extensions.Options
             ArgumentNullException.ThrowIfNull(validation);
 
             Services.AddSingleton<IAsyncValidateOptions<TOptions>>(new AsyncValidateOptions<TOptions>(Name, validation, failureMessage));
+            RegisterAsyncValidationGuard();
+
             return this;
+        }
+
+        /// <summary>
+        /// Registers the async validation guard that throws if async validators
+        /// are registered without a corresponding <c>ValidateOnStartAsync</c> call.
+        /// This method is not intended for direct use by application code.
+        /// </summary>
+        [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+        public void RegisterAsyncValidationGuard()
+        {
+            Services.TryAddSingleton<AsyncValidationState>();
+            Services.TryAddSingleton<IValidateOptions<TOptions>>(
+                sp => new AsyncValidationGuard<TOptions>(sp.GetRequiredService<AsyncValidationState>()));
         }
 
         /// <summary>

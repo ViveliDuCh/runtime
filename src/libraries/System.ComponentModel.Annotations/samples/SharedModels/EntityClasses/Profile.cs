@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -28,16 +29,14 @@ public class Profile : IAsyncValidatableObject
     public int? Delay { get; set; }
 
     /// <inheritdoc />
-    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(
+    public async IAsyncEnumerable<ValidationResult> ValidateAsync(
         ValidationContext validationContext,
-        CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var results = new List<ValidationResult>();
-
         if (Delay is null)
         {
-            results.Add(new ValidationResult("Delay is not configured.", new[] { nameof(Delay) }));
-            return results;
+            yield return new ValidationResult("Delay is not configured.", new[] { nameof(Delay) });
+            yield break;
         }
 
         // Simulate async uniqueness check for Username
@@ -45,7 +44,7 @@ public class Profile : IAsyncValidatableObject
 
         if (string.Equals(Username, "admin", StringComparison.OrdinalIgnoreCase))
         {
-            results.Add(new ValidationResult("The username 'admin' is reserved.", new[] { nameof(Username) }));
+            yield return new ValidationResult("The username 'admin' is reserved.", new[] { nameof(Username) });
         }
 
         // Simulate async content-moderation check for Bio
@@ -53,11 +52,9 @@ public class Profile : IAsyncValidatableObject
 
         if (Bio is not null && Bio.Length > 200)
         {
-            results.Add(new ValidationResult(
+            yield return new ValidationResult(
                 "Bio exceeds the 200-character limit after moderation review.",
-                new[] { nameof(Bio) }));
+                new[] { nameof(Bio) });
         }
-
-        return results;
     }
 }

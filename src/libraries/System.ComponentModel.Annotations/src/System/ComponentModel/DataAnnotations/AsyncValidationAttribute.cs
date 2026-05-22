@@ -62,6 +62,13 @@ namespace System.ComponentModel.DataAnnotations
         ///     When validation is valid, <see cref="ValidationResult.Success" />.
         ///     When validation is invalid, an instance of <see cref="ValidationResult" />.
         /// </returns>
+        /// <remarks>
+        ///     <see cref="ValueTask{TResult}" /> is used instead of <see cref="System.Threading.Tasks.Task{TResult}" />
+        ///     because this method is a leaf API called once per attribute per value within the validation
+        ///     pipeline. Validators that complete synchronously (e.g., cached lookups) benefit from the
+        ///     zero-allocation path. Callers that need to compose results via <c>Task.WhenAll</c>
+        ///     should use <see cref="ValueTask{TResult}.AsTask" />.
+        /// </remarks>
         protected abstract ValueTask<ValidationResult?> IsValidAsync(
             object? value,
             ValidationContext validationContext,
@@ -71,6 +78,12 @@ namespace System.ComponentModel.DataAnnotations
         ///     Tests whether the given <paramref name="value" /> is valid asynchronously with respect to the current
         ///     validation attribute without throwing a <see cref="ValidationException" />.
         /// </summary>
+        /// <remarks>
+        ///     Returns <see cref="ValueTask{TResult}" /> for consistency with <see cref="IsValidAsync" />.
+        ///     This is a leaf API consumed via a single <c>await</c> within the <see cref="Validator" />
+        ///     pipeline. Orchestration layers that aggregate results across attributes use
+        ///     <see cref="ValueTask{TResult}.AsTask" /> internally.
+        /// </remarks>
         public ValueTask<ValidationResult?> GetValidationResultAsync(
             object? value,
             ValidationContext validationContext,
