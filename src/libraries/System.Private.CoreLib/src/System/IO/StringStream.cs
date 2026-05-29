@@ -106,6 +106,7 @@ public sealed class StringStream : Stream
         }
 
         int totalBytesWritten = 0;
+        int bufferBytesWritten = 0;
 
         // Drain any pending bytes from a previous partial read.
         if (_pendingCount > 0)
@@ -142,6 +143,7 @@ public sealed class StringStream : Stream
                 int toCopy = Math.Min(bytesUsed, buffer.Length);
                 _pendingBytes.AsSpan(0, toCopy).CopyTo(buffer);
                 totalBytesWritten += toCopy;
+                bufferBytesWritten += toCopy;
 
                 _pendingOffset = toCopy;
                 _pendingCount = bytesUsed - toCopy;
@@ -154,6 +156,7 @@ public sealed class StringStream : Stream
                 _encoder.Convert(remaining, buffer, flush: false, out int charsUsed, out int bytesUsed, out _);
                 _charPosition += charsUsed;
                 totalBytesWritten += bytesUsed;
+                bufferBytesWritten += bytesUsed;
             }
         }
 
@@ -169,7 +172,7 @@ public sealed class StringStream : Stream
 
             if (flushBytes > 0)
             {
-                Span<byte> flushTarget = buffer.Slice(totalBytesWritten);
+                Span<byte> flushTarget = buffer.Slice(bufferBytesWritten);
                 int toCopy = Math.Min(flushBytes, flushTarget.Length);
                 if (toCopy > 0)
                 {
