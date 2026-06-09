@@ -33,8 +33,21 @@ namespace Microsoft.Extensions.DependencyInjection
         /// <param name="optionsBuilder">The options builder to add the services to.</param>
         /// <returns>The <see cref="OptionsBuilder{TOptions}"/> so that additional calls can be chained.</returns>
         /// <remarks>
+        /// <para>
         /// Async validators run only at startup when used with <c>ValidateOnStart</c>.
         /// <see cref="IOptionsMonitor{TOptions}"/> reload validation uses only synchronous validators.
+        /// </para>
+        /// <para>
+        /// The <see cref="System.Threading.CancellationToken"/> passed to each validator is propagated from
+        /// <c>Host.StartAsync(CancellationToken)</c>. By default, no startup timeout
+        /// is applied. Configure <c>HostOptions.StartupTimeout</c> or pass
+        /// a <see cref="System.Threading.CancellationToken"/> with a timeout to <c>Host.StartAsync</c>
+        /// to bound I/O-bound async validators:
+        /// <code>
+        /// builder.Services.Configure&lt;HostOptions&gt;(opts =&gt;
+        ///     opts.StartupTimeout = TimeSpan.FromSeconds(30));
+        /// </code>
+        /// </para>
         /// </remarks>
         [RequiresUnreferencedCode("Uses DataAnnotationValidateOptionsAsync which is unsafe given that the options type passed in when calling Validate cannot be statically analyzed so its" +
             " members may be trimmed.")]

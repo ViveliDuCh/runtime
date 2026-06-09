@@ -48,6 +48,17 @@ namespace Microsoft.Extensions.Options
         /// <param name="options">The options instance.</param>
         /// <param name="cancellationToken">The token to monitor for cancellation requests.</param>
         /// <returns>The <see cref="ValidateOptionsResult"/> result.</returns>
+        /// <remarks>
+        /// The <paramref name="cancellationToken"/> is propagated from
+        /// <c>Host.StartAsync(CancellationToken)</c>. By default, no startup timeout
+        /// is applied. Configure <see cref="T:Microsoft.Extensions.Hosting.HostOptions.StartupTimeout"/> or pass
+        /// a <see cref="CancellationToken"/> with a timeout to <c>Host.StartAsync</c>
+        /// to bound I/O-bound async validators:
+        /// <code>
+        /// builder.Services.Configure&lt;HostOptions&gt;(opts =&gt;
+        ///     opts.StartupTimeout = TimeSpan.FromSeconds(30));
+        /// </code>
+        /// </remarks>
         [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2026:RequiresUnreferencedCode",
             Justification = "Suppressing the warnings on this method since the constructor of the type is annotated as RequiresUnreferencedCode.")]
         public async Task<ValidateOptionsResult> ValidateAsync(string? name, TOptions options, CancellationToken cancellationToken = default)
