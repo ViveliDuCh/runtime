@@ -4,6 +4,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Primitives;
 
 namespace Microsoft.Extensions.Options
@@ -20,6 +22,8 @@ namespace Microsoft.Extensions.Options
         private readonly IOptionsMonitorCache<TOptions> _cache;
         private readonly IOptionsFactory<TOptions> _factory;
         private readonly List<IDisposable> _registrations = new List<IDisposable>();
+        private readonly ReloadCoordinator? _reloadCoordinator;
+        private bool _disposed;
         internal event Action<TOptions, string>? _onChange;
 
         /// <summary>
@@ -32,6 +36,16 @@ namespace Microsoft.Extensions.Options
         {
             _factory = factory;
             _cache = cache;
+
+            if (GetType() == typeof(OptionsMonitor<TOptions>) &&
+                factory is OptionsFactory<TOptions> optionsFactory &&
+                optionsFactory.GetType() == typeof(OptionsFactory<TOptions>) &&
+                optionsFactory.ReloadValidation is OptionsReloadValidation<TOptions> reloadValidation &&
+                cache is OptionsCache<TOptions> optionsCache &&
+                optionsCache.GetType() == typeof(OptionsCache<TOptions>))
+            {
+                _reloadCoordinator = new ReloadCoordinator(optionsFactory, optionsCache, reloadValidation);
+            }
 
             void RegisterSource(IOptionsChangeTokenSource<TOptions> source)
             {
@@ -64,9 +78,320 @@ namespace Microsoft.Extensions.Options
         private void InvokeChanged(string? name)
         {
             name ??= Options.DefaultName;
+
+            if (TryScheduleReload(name))
+            {
+                return;
+            }
+
             _cache.TryRemove(name);
             TOptions options = Get(name);
             _onChange?.Invoke(options, name);
+        }
+
+        private bool TryScheduleReload(string name)
+        {
+            ReloadCoordinator? coordinator = _reloadCoordinator;
+
+            if (coordinator is null ||
+                !coordinator.States.TryGetValue(name, out ReloadState? state))
+            {
+                return false;
+            }
+
+            bool startWorker = false;
+
+            lock (state.SyncObj)
+            {
+                state.Generation++;
+
+                if (Volatile.Read(ref _disposed))
+                {
+                    return true;
+                }
+
+                if (state.StartupValidated && !state.WorkerRunning)
+                {
+                    state.WorkerRunning = true;
+                    startWorker = true;
+                }
+            }
+
+            if (startWorker)
+            {
+                _ = ProcessReloadsAsync(name, state, coordinator);
+            }
+
+            return true;
+        }
+
+        internal async Task ValidateOnStartAsync(
+            string name,
+            UnnamedOptionsManager<TOptions>? optionsManager,
+            CancellationToken cancellationToken)
+        {
+            ReloadCoordinator? coordinator = _reloadCoordinator;
+
+            if (coordinator is null ||
+                !coordinator.States.TryGetValue(name, out ReloadState? state))
+            {
+                throw new InvalidOperationException(
+                    SR.Format(SR.OptionsReloadValidationUnsupported, typeof(TOptions)));
+            }
+
+            using CancellationTokenSource linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                coordinator.Cancellation.Token);
+            CancellationToken validationToken = linkedCancellation.Token;
+
+            await state.StartupGate.WaitAsync(validationToken).ConfigureAwait(false);
+            try
+            {
+                while (true)
+                {
+                    validationToken.ThrowIfCancellationRequested();
+
+                    long generation;
+                    lock (state.SyncObj)
+                    {
+                        if (state.StartupValidated)
+                        {
+                            return;
+                        }
+
+                        generation = state.Generation;
+                    }
+
+                    TOptions candidate;
+                    try
+                    {
+                        candidate = await coordinator.Factory.CreateAsync(name, validationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (validationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        validationToken.ThrowIfCancellationRequested();
+
+                        lock (state.SyncObj)
+                        {
+                            if (generation != state.Generation)
+                            {
+                                continue;
+                            }
+                        }
+
+                        throw;
+                    }
+
+                    lock (state.SyncObj)
+                    {
+                        if (Volatile.Read(ref _disposed))
+                        {
+                            throw new OperationCanceledException(coordinator.Cancellation.Token);
+                        }
+
+                        if (generation != state.Generation)
+                        {
+                            continue;
+                        }
+
+                        TOptions winner = optionsManager?.GetOrSetValue(candidate) ?? candidate;
+                        coordinator.Cache.SetValidated(name, winner);
+                        state.StartupValidated = true;
+                        return;
+                    }
+                }
+            }
+            finally
+            {
+                state.StartupGate.Release();
+            }
+        }
+
+        private async Task ProcessReloadsAsync(string name, ReloadState state, ReloadCoordinator coordinator)
+        {
+            long observedGeneration = -1;
+
+            try
+            {
+                while (true)
+                {
+                    lock (state.SyncObj)
+                    {
+                        if (Volatile.Read(ref _disposed))
+                        {
+                            return;
+                        }
+
+                        observedGeneration = state.Generation;
+                    }
+
+                    TOptions candidate;
+                    try
+                    {
+                        candidate = await coordinator.Factory
+                            .CreateAsync(name, coordinator.Cancellation.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (coordinator.Cancellation.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception error)
+                    {
+                        lock (state.SyncObj)
+                        {
+                            if (Volatile.Read(ref _disposed))
+                            {
+                                return;
+                            }
+
+                            if (observedGeneration != state.Generation)
+                            {
+                                continue;
+                            }
+
+                            if (state.Registration.Behavior == OptionsReloadValidationBehavior.FailReads)
+                            {
+                                coordinator.Cache.SetException(name, error);
+                            }
+                        }
+
+                        ReportReloadFailure(name, state.Registration, error);
+
+                        lock (state.SyncObj)
+                        {
+                            if (Volatile.Read(ref _disposed))
+                            {
+                                return;
+                            }
+
+                            if (observedGeneration != state.Generation)
+                            {
+                                continue;
+                            }
+
+                            return;
+                        }
+                    }
+
+                    lock (state.SyncObj)
+                    {
+                        if (Volatile.Read(ref _disposed))
+                        {
+                            return;
+                        }
+
+                        if (observedGeneration != state.Generation)
+                        {
+                            continue;
+                        }
+
+                        coordinator.Cache.SetValidated(name, candidate);
+                    }
+
+                    NotifyChanged(name, candidate);
+
+                    lock (state.SyncObj)
+                    {
+                        if (Volatile.Read(ref _disposed))
+                        {
+                            return;
+                        }
+
+                        if (observedGeneration != state.Generation)
+                        {
+                            continue;
+                        }
+
+                        return;
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                if (!Volatile.Read(ref _disposed))
+                {
+                    OptionsEventSource.Log.ReloadWorkerFailed(
+                        typeof(TOptions).ToString(),
+                        name,
+                        error.GetType().ToString());
+                }
+            }
+            finally
+            {
+                bool restart = false;
+
+                lock (state.SyncObj)
+                {
+                    state.WorkerRunning = false;
+
+                    if (!Volatile.Read(ref _disposed) &&
+                        state.StartupValidated &&
+                        observedGeneration != state.Generation)
+                    {
+                        state.WorkerRunning = true;
+                        restart = true;
+                    }
+                }
+
+                if (restart)
+                {
+                    _ = ProcessReloadsAsync(name, state, coordinator);
+                }
+            }
+        }
+
+        private void ReportReloadFailure(
+            string name,
+            OptionsReloadValidationRegistration<TOptions> registration,
+            Exception error)
+        {
+            OptionsEventSource.Log.ReloadValidationFailed(
+                typeof(TOptions).ToString(),
+                name,
+                error.GetType().ToString(),
+                (int)registration.Behavior);
+
+            if (registration.OnError is null || Volatile.Read(ref _disposed))
+            {
+                return;
+            }
+
+            try
+            {
+                registration.OnError(name, error);
+            }
+            catch (Exception callbackError)
+            {
+                OptionsEventSource.Log.ReloadErrorCallbackFailed(
+                    typeof(TOptions).ToString(),
+                    name,
+                    callbackError.GetType().ToString());
+            }
+        }
+
+        private void NotifyChanged(string name, TOptions options)
+        {
+            if (Volatile.Read(ref _disposed))
+            {
+                return;
+            }
+
+            try
+            {
+                _onChange?.Invoke(options, name);
+            }
+            catch (Exception error)
+            {
+                OptionsEventSource.Log.ChangeListenerFailed(
+                    typeof(TOptions).ToString(),
+                    name,
+                    error.GetType().ToString());
+            }
         }
 
         /// <summary>
@@ -118,6 +443,9 @@ namespace Microsoft.Extensions.Options
         /// </summary>
         public void Dispose()
         {
+            Volatile.Write(ref _disposed, true);
+            _reloadCoordinator?.Cancellation.Cancel();
+
             // Remove all subscriptions to the change tokens
             foreach (IDisposable registration in _registrations)
             {
@@ -125,6 +453,52 @@ namespace Microsoft.Extensions.Options
             }
 
             _registrations.Clear();
+        }
+
+        private sealed class ReloadCoordinator
+        {
+            internal ReloadCoordinator(
+                OptionsFactory<TOptions> factory,
+                OptionsCache<TOptions> cache,
+                OptionsReloadValidation<TOptions> reloadValidation)
+            {
+                Factory = factory;
+                Cache = cache;
+                States = new Dictionary<string, ReloadState>(StringComparer.Ordinal);
+
+                foreach (OptionsReloadValidationRegistration<TOptions> registration in reloadValidation.Registrations)
+                {
+                    States[registration.Name] = new ReloadState(registration);
+                }
+            }
+
+            internal OptionsFactory<TOptions> Factory { get; }
+
+            internal OptionsCache<TOptions> Cache { get; }
+
+            internal Dictionary<string, ReloadState> States { get; }
+
+            internal CancellationTokenSource Cancellation { get; } = new CancellationTokenSource();
+        }
+
+        private sealed class ReloadState
+        {
+            internal ReloadState(OptionsReloadValidationRegistration<TOptions> registration)
+            {
+                Registration = registration;
+            }
+
+            internal object SyncObj { get; } = new object();
+
+            internal SemaphoreSlim StartupGate { get; } = new SemaphoreSlim(1, 1);
+
+            internal OptionsReloadValidationRegistration<TOptions> Registration { get; }
+
+            internal long Generation;
+
+            internal bool StartupValidated;
+
+            internal bool WorkerRunning;
         }
 
         internal sealed class ChangeTrackerDisposable : IDisposable

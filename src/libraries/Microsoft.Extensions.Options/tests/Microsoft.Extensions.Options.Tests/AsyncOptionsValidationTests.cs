@@ -4,10 +4,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.Tracing;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Primitives;
 using Xunit;
 
 namespace Microsoft.Extensions.Options.Tests
@@ -519,7 +522,7 @@ namespace Microsoft.Extensions.Options.Tests
             string failure = Assert.Single(error.Failures);
             Assert.Contains("IOptionsSnapshot<TOptions>", failure);
             Assert.Contains("cannot execute or await ValidateAsync", failure);
-            Assert.Contains("not populated by startup validation", failure);
+            Assert.Contains("not populated by startup or reload validation", failure);
         }
 
         [Fact]
@@ -839,6 +842,940 @@ namespace Microsoft.Extensions.Options.Tests
                 FakeOptions options,
                 CancellationToken cancellationToken = default) =>
                 Task.FromResult(ValidateOptionsResult.Success);
+        }
+
+        private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
+
+        [Fact]
+        public void ValidateOnChange_NullBuilder_ThrowsArgumentNullException()
+        {
+            ArgumentNullException error = Assert.Throws<ArgumentNullException>(
+                () => OptionsBuilderExtensions.ValidateOnChange<FakeOptions>(null!));
+
+            Assert.Equal("optionsBuilder", error.ParamName);
+        }
+
+        [Fact]
+        public void ValidateOnChange_UndefinedBehavior_ThrowsArgumentOutOfRangeException()
+        {
+            var services = new ServiceCollection();
+            OptionsBuilder<FakeOptions> builder = services.AddOptions<FakeOptions>();
+            int serviceCount = services.Count;
+
+            ArgumentOutOfRangeException error = Assert.Throws<ArgumentOutOfRangeException>(
+                () => builder.ValidateOnChange((OptionsReloadValidationBehavior)42));
+
+            Assert.Equal("behavior", error.ParamName);
+            Assert.Equal(serviceCount, services.Count);
+        }
+
+        [Fact]
+        public void IAsyncValidateOptions_Contract_InheritsIValidateOptionsAndIsInvariant()
+        {
+            Assert.Contains(
+                typeof(IValidateOptions<FakeOptions>),
+                typeof(IAsyncValidateOptions<FakeOptions>).GetInterfaces());
+
+            Type genericParameter = Assert.Single(typeof(IAsyncValidateOptions<>).GetGenericArguments());
+            GenericParameterAttributes variance =
+                genericParameter.GenericParameterAttributes & GenericParameterAttributes.VarianceMask;
+            Assert.Equal(GenericParameterAttributes.None, variance);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_EnablesAsyncStartupValidationAndSeedsExactCandidate()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange();
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+
+            Assert.Single(serviceProvider.GetServices<IAsyncStartupValidator>());
+            IAsyncStartupValidator startupValidator = GetAsyncStartupValidator(serviceProvider);
+            Task startupValidation = startupValidator.ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(Options.DefaultName, startup.Name);
+
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            Assert.Equal(1, controlledValidator.AsyncCalls);
+            Assert.Same(startup.Options, serviceProvider.GetRequiredService<IOptions<FakeOptions>>().Value);
+            Assert.Same(startup.Options, serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>().CurrentValue);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_SuccessfulDefaultReload_PublishesExactCandidateAndNotifiesOnce()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange();
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            IOptions<FakeOptions> options = serviceProvider.GetRequiredService<IOptions<FakeOptions>>();
+            IOptionsMonitor<FakeOptions> monitor = serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            FakeOptions startupCandidate = startup.Options;
+            FakeOptions? callbackOptions = null;
+            string? callbackName = null;
+            int callbackCalls = 0;
+            using var listenerCalled = new ManualResetEventSlim();
+            using IDisposable? listener = monitor.OnChange((value, name) =>
+            {
+                callbackOptions = value;
+                callbackName = name;
+                Interlocked.Increment(ref callbackCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation reload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(Options.DefaultName, reload.Name);
+            Assert.False(reload.Completion.IsCompleted);
+            Assert.NotSame(startupCandidate, reload.Options);
+
+            reload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(Options.DefaultName, callbackName);
+            Assert.Same(reload.Options, callbackOptions);
+            Assert.Same(reload.Options, monitor.CurrentValue);
+            Assert.Same(startupCandidate, options.Value);
+            Assert.Equal(2, controlledValidator.AsyncCalls);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_SuccessfulNamedReload_UpdatesOnlyMatchingName()
+        {
+            const string WatchedName = "watched";
+            const string OtherName = "other";
+
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(WatchedName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>(WatchedName)
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange();
+            services.AddOptions<FakeOptions>(OtherName)
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString());
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(WatchedName, startup.Name);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            IOptionsMonitor<FakeOptions> monitor = serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Assert.Same(startup.Options, monitor.Get(WatchedName));
+            FakeOptions other = monitor.Get(OtherName);
+            FakeOptions? callbackOptions = null;
+            string? callbackName = null;
+            int callbackCalls = 0;
+            using var listenerCalled = new ManualResetEventSlim();
+            using IDisposable? listener = monitor.OnChange((value, name) =>
+            {
+                callbackOptions = value;
+                callbackName = name;
+                Interlocked.Increment(ref callbackCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation reload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(WatchedName, reload.Name);
+            Assert.NotSame(startup.Options, reload.Options);
+            reload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(WatchedName, callbackName);
+            Assert.Same(reload.Options, callbackOptions);
+            Assert.Same(reload.Options, monitor.Get(WatchedName));
+            Assert.Same(other, monitor.Get(OtherName));
+            Assert.Equal(2, controlledValidator.AsyncCalls);
+        }
+
+        [Theory]
+        [InlineData(OptionsReloadValidationBehavior.KeepLastGood)]
+        [InlineData(OptionsReloadValidationBehavior.FailReads)]
+        public async Task ValidateOnChange_FailedCurrentReload_AppliesBehaviorBeforeInvokingOnError(
+            OptionsReloadValidationBehavior behavior)
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+            IOptionsMonitor<FakeOptions>? monitor = null;
+            FakeOptions? callbackRead = null;
+            Exception? callbackReadError = null;
+            string? callbackName = null;
+            Exception? callbackError = null;
+            int callbackCalls = 0;
+            int listenerCalls = 0;
+            using var onErrorCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange(behavior, (name, error) =>
+                {
+                    callbackName = name;
+                    callbackError = error;
+
+                    try
+                    {
+                        callbackRead = monitor!.CurrentValue;
+                    }
+                    catch (Exception readError)
+                    {
+                        callbackReadError = readError;
+                    }
+                    finally
+                    {
+                        Interlocked.Increment(ref callbackCalls);
+                        onErrorCalled.Set();
+                    }
+                });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            monitor = serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            FakeOptions startupCandidate = startup.Options;
+            Assert.Same(startupCandidate, monitor.CurrentValue);
+            using IDisposable? listener = monitor.OnChange((_, _) => Interlocked.Increment(ref listenerCalls));
+
+            changeSource.Trigger();
+            ValidationInvocation reload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(Options.DefaultName, reload.Name);
+            Assert.NotSame(startupCandidate, reload.Options);
+            reload.Complete(ValidateOptionsResult.Fail("reload failed"));
+
+            Assert.True(onErrorCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(Options.DefaultName, callbackName);
+            OptionsValidationException validationError = Assert.IsType<OptionsValidationException>(callbackError);
+            Assert.Equal(typeof(FakeOptions), validationError.OptionsType);
+            Assert.Equal(Options.DefaultName, validationError.OptionsName);
+            Assert.Equal("reload failed", Assert.Single(validationError.Failures));
+            Assert.Equal(0, Volatile.Read(ref listenerCalls));
+
+            if (behavior == OptionsReloadValidationBehavior.KeepLastGood)
+            {
+                Assert.Null(callbackReadError);
+                Assert.Same(startupCandidate, callbackRead);
+                Assert.Same(startupCandidate, monitor.CurrentValue);
+            }
+            else
+            {
+                Assert.Null(callbackRead);
+                Assert.Same(validationError, callbackReadError);
+                Assert.Same(
+                    validationError,
+                    Assert.Throws<OptionsValidationException>(() => monitor.CurrentValue));
+            }
+
+            Assert.Equal(2, controlledValidator.AsyncCalls);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_IOptionsValue_RemainsStartupWinnerAcrossSuccessfulAndFailedReloads()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+            string? callbackName = null;
+            Exception? callbackError = null;
+            int callbackCalls = 0;
+            FakeOptions? listenerValue = null;
+            string? listenerName = null;
+            int listenerCalls = 0;
+            using var onErrorCalled = new ManualResetEventSlim();
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange(OptionsReloadValidationBehavior.FailReads, (name, error) =>
+                {
+                    callbackName = name;
+                    callbackError = error;
+                    Interlocked.Increment(ref callbackCalls);
+                    onErrorCalled.Set();
+                });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            IOptions<FakeOptions> options = serviceProvider.GetRequiredService<IOptions<FakeOptions>>();
+            FakeOptions startupCandidate = startup.Options;
+            Assert.Same(startupCandidate, options.Value);
+            Assert.Same(startupCandidate, monitor.CurrentValue);
+            using IDisposable? listener = monitor.OnChange((value, name) =>
+            {
+                listenerValue = value;
+                listenerName = name;
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation successfulReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            successfulReload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Equal(Options.DefaultName, listenerName);
+            Assert.Same(successfulReload.Options, listenerValue);
+            Assert.Same(successfulReload.Options, monitor.CurrentValue);
+            Assert.Same(startupCandidate, options.Value);
+
+            changeSource.Trigger();
+            ValidationInvocation failedReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            failedReload.Complete(ValidateOptionsResult.Fail("reload failed"));
+
+            Assert.True(onErrorCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(Options.DefaultName, callbackName);
+            OptionsValidationException validationError = Assert.IsType<OptionsValidationException>(callbackError);
+            Assert.Equal(typeof(FakeOptions), validationError.OptionsType);
+            Assert.Equal(Options.DefaultName, validationError.OptionsName);
+            Assert.Equal("reload failed", Assert.Single(validationError.Failures));
+            Assert.Same(
+                validationError,
+                Assert.Throws<OptionsValidationException>(() => monitor.CurrentValue));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Same(startupCandidate, options.Value);
+            Assert.Equal(3, controlledValidator.AsyncCalls);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("named")]
+        public async Task ValidateOnChange_IOptionsSnapshot_RemainsScopeLocalAndSynchronousAfterMonitorReload(
+            string name)
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(name);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+            FakeOptions? listenerValue = null;
+            string? listenerName = null;
+            int listenerCalls = 0;
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>(name)
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange();
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(name, startup.Name);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            Assert.Same(startup.Options, monitor.Get(name));
+            Assert.Equal(1, controlledValidator.AsyncCalls);
+            Assert.Equal(0, controlledValidator.SyncCalls);
+
+            using IServiceScope scope1 = serviceProvider.CreateScope();
+            IOptionsSnapshot<FakeOptions> snapshot1 =
+                scope1.ServiceProvider.GetRequiredService<IOptionsSnapshot<FakeOptions>>();
+            FakeOptions scope1Value = snapshot1.Get(name);
+
+            Assert.Same(scope1Value, snapshot1.Get(name));
+            Assert.NotSame(startup.Options, scope1Value);
+            Assert.Equal(1, controlledValidator.SyncCalls);
+            Assert.Equal(1, controlledValidator.AsyncCalls);
+
+            using IDisposable? listener = monitor.OnChange((value, changedName) =>
+            {
+                listenerValue = value;
+                listenerName = changedName;
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation reload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(name, reload.Name);
+            reload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Equal(name, listenerName);
+            Assert.Same(reload.Options, listenerValue);
+            Assert.Same(reload.Options, monitor.Get(name));
+            Assert.NotSame(reload.Options, scope1Value);
+            Assert.Same(scope1Value, snapshot1.Get(name));
+            Assert.Equal(1, controlledValidator.SyncCalls);
+            Assert.Equal(2, controlledValidator.AsyncCalls);
+
+            using IServiceScope scope2 = serviceProvider.CreateScope();
+            IOptionsSnapshot<FakeOptions> snapshot2 =
+                scope2.ServiceProvider.GetRequiredService<IOptionsSnapshot<FakeOptions>>();
+            FakeOptions scope2Value = snapshot2.Get(name);
+
+            Assert.NotSame(scope1Value, scope2Value);
+            Assert.NotSame(reload.Options, scope2Value);
+            Assert.Same(scope2Value, snapshot2.Get(name));
+            Assert.Equal(2, controlledValidator.SyncCalls);
+            Assert.Equal(2, controlledValidator.AsyncCalls);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_ValidatorThrowsThenNextValidReloadRecovers()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+            Exception? callbackError = null;
+            int callbackCalls = 0;
+            FakeOptions? listenerValue = null;
+            int listenerCalls = 0;
+            using var onErrorCalled = new ManualResetEventSlim();
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange(onError: (_, error) =>
+                {
+                    callbackError = error;
+                    Interlocked.Increment(ref callbackCalls);
+                    onErrorCalled.Set();
+                });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            Assert.Equal("1", startup.Options.Message);
+            Assert.Same(startup.Options, monitor.CurrentValue);
+            using IDisposable? listener = monitor.OnChange((value, _) =>
+            {
+                listenerValue = value;
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation failedReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            var expectedError = new InvalidOperationException("reload validator threw");
+
+            Assert.Equal("2", failedReload.Options.Message);
+            Assert.NotSame(startup.Options, failedReload.Options);
+            failedReload.Fail(expectedError);
+
+            Assert.True(onErrorCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Same(expectedError, callbackError);
+            Assert.Equal(0, Volatile.Read(ref listenerCalls));
+            Assert.Same(startup.Options, monitor.CurrentValue);
+
+            changeSource.Trigger();
+            ValidationInvocation successfulReload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal("3", successfulReload.Options.Message);
+            Assert.NotSame(failedReload.Options, successfulReload.Options);
+            successfulReload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Same(successfulReload.Options, listenerValue);
+            Assert.Same(successfulReload.Options, monitor.CurrentValue);
+            Assert.Equal(3, controlledValidator.AsyncCalls);
+            Assert.Equal(3, Volatile.Read(ref configureCalls));
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_OnErrorThrows_ReportsEventAndNextValidReloadSucceeds()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            using var eventListener = new OptionsTestEventListener(expectedEventId: 2);
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int callbackCalls = 0;
+            int listenerCalls = 0;
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .ValidateOnChange(onError: (_, _) =>
+                {
+                    Interlocked.Increment(ref callbackCalls);
+                    throw new InvalidOperationException("callback failed");
+                });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            using IDisposable? listener = monitor.OnChange((_, _) =>
+            {
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation failedReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            failedReload.Complete(ValidateOptionsResult.Fail("reload failed"));
+
+            Assert.True(eventListener.Wait(TestTimeout));
+            Assert.Equal(typeof(InvalidOperationException).ToString(), eventListener.ExceptionType);
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(0, Volatile.Read(ref listenerCalls));
+            Assert.Same(startup.Options, monitor.CurrentValue);
+
+            changeSource.Trigger();
+            ValidationInvocation successfulReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            successfulReload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Same(successfulReload.Options, monitor.CurrentValue);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_SupersededFailure_IsIgnoredAndLatestGenerationPublishes()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int callbackCalls = 0;
+            FakeOptions? listenerValue = null;
+            int listenerCalls = 0;
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .ValidateOnChange(
+                    OptionsReloadValidationBehavior.FailReads,
+                    (_, _) => Interlocked.Increment(ref callbackCalls));
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            using IDisposable? listener = monitor.OnChange((value, _) =>
+            {
+                listenerValue = value;
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation supersededReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            changeSource.Trigger();
+            supersededReload.Fail(new InvalidOperationException("superseded"));
+
+            ValidationInvocation latestReload = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            Assert.Equal(0, Volatile.Read(ref callbackCalls));
+            Assert.Equal(0, Volatile.Read(ref listenerCalls));
+            Assert.Same(startup.Options, monitor.CurrentValue);
+            Assert.Equal(1, controlledValidator.MaximumActiveInvocations);
+
+            latestReload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(0, Volatile.Read(ref callbackCalls));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Same(latestReload.Options, listenerValue);
+            Assert.Same(latestReload.Options, monitor.CurrentValue);
+            Assert.Equal(3, controlledValidator.AsyncCalls);
+            Assert.Equal(1, controlledValidator.MaximumActiveInvocations);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_DisposalDuringStartupValidation_CancelsValidation()
+        {
+            using var controlledValidator = new ControlledAsyncValidator(honorCancellation: true);
+            var services = new ServiceCollection();
+
+            services.AddOptions<FakeOptions>().ValidateOnChange();
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            OptionsMonitor<FakeOptions> monitor = Assert.IsType<OptionsMonitor<FakeOptions>>(
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>());
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+
+            monitor.Dispose();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => startupValidation);
+            Assert.True(startup.CancellationToken.IsCancellationRequested);
+            Assert.Equal(1, controlledValidator.AsyncCalls);
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_MultipleRegistrations_LastRegistrationWins()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int firstCallbackCalls = 0;
+            Exception? secondCallbackError = null;
+            int secondCallbackCalls = 0;
+            using var secondCallbackCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .ValidateOnChange(
+                    OptionsReloadValidationBehavior.KeepLastGood,
+                    (_, _) => Interlocked.Increment(ref firstCallbackCalls))
+                .ValidateOnChange(
+                    OptionsReloadValidationBehavior.FailReads,
+                    (_, error) =>
+                    {
+                        secondCallbackError = error;
+                        Interlocked.Increment(ref secondCallbackCalls);
+                        secondCallbackCalled.Set();
+                    });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            changeSource.Trigger();
+            ValidationInvocation reload = controlledValidator.TakeNextInvocation(TestTimeout);
+            reload.Complete(ValidateOptionsResult.Fail("reload failed"));
+
+            Assert.True(secondCallbackCalled.Wait(TestTimeout));
+            Assert.Equal(0, Volatile.Read(ref firstCallbackCalls));
+            Assert.Equal(1, Volatile.Read(ref secondCallbackCalls));
+            OptionsValidationException validationError =
+                Assert.IsType<OptionsValidationException>(secondCallbackError);
+            Assert.Same(
+                validationError,
+                Assert.Throws<OptionsValidationException>(() => monitor.CurrentValue));
+        }
+
+        [Fact]
+        public async Task ValidateOnChange_FailReads_RecoversOnNextSuccessfulReload()
+        {
+            using var controlledValidator = new ControlledAsyncValidator();
+            var changeSource = new ReloadChangeTokenSource<FakeOptions>(Options.DefaultName);
+            var services = new ServiceCollection();
+            int configureCalls = 0;
+            string? callbackName = null;
+            Exception? callbackError = null;
+            int callbackCalls = 0;
+            FakeOptions? listenerValue = null;
+            string? listenerName = null;
+            int listenerCalls = 0;
+            using var onErrorCalled = new ManualResetEventSlim();
+            using var listenerCalled = new ManualResetEventSlim();
+
+            services.AddSingleton<IOptionsChangeTokenSource<FakeOptions>>(changeSource);
+            services.AddOptions<FakeOptions>()
+                .Configure(options => options.Message = Interlocked.Increment(ref configureCalls).ToString())
+                .ValidateOnChange(OptionsReloadValidationBehavior.FailReads, (name, error) =>
+                {
+                    callbackName = name;
+                    callbackError = error;
+                    Interlocked.Increment(ref callbackCalls);
+                    onErrorCalled.Set();
+                });
+            services.AddSingleton<IValidateOptions<FakeOptions>>(controlledValidator);
+
+            using ServiceProvider serviceProvider = services.BuildServiceProvider();
+            IOptionsMonitor<FakeOptions> monitor =
+                serviceProvider.GetRequiredService<IOptionsMonitor<FakeOptions>>();
+            Task startupValidation = GetAsyncStartupValidator(serviceProvider).ValidateAsync(CancellationToken.None);
+            ValidationInvocation startup = controlledValidator.TakeNextInvocation(TestTimeout);
+            startup.Complete(ValidateOptionsResult.Success);
+            await startupValidation;
+
+            Assert.Same(startup.Options, monitor.CurrentValue);
+            using IDisposable? listener = monitor.OnChange((value, name) =>
+            {
+                listenerValue = value;
+                listenerName = name;
+                Interlocked.Increment(ref listenerCalls);
+                listenerCalled.Set();
+            });
+
+            changeSource.Trigger();
+            ValidationInvocation failedReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            failedReload.Complete(ValidateOptionsResult.Fail("reload failed"));
+
+            Assert.True(onErrorCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(Options.DefaultName, callbackName);
+            OptionsValidationException validationError = Assert.IsType<OptionsValidationException>(callbackError);
+            Assert.Equal(typeof(FakeOptions), validationError.OptionsType);
+            Assert.Equal(Options.DefaultName, validationError.OptionsName);
+            Assert.Equal("reload failed", Assert.Single(validationError.Failures));
+            Assert.Same(
+                validationError,
+                Assert.Throws<OptionsValidationException>(() => monitor.CurrentValue));
+            Assert.Equal(0, Volatile.Read(ref listenerCalls));
+
+            changeSource.Trigger();
+            ValidationInvocation successfulReload = controlledValidator.TakeNextInvocation(TestTimeout);
+            successfulReload.Complete(ValidateOptionsResult.Success);
+
+            Assert.True(listenerCalled.Wait(TestTimeout));
+            Assert.Equal(1, Volatile.Read(ref callbackCalls));
+            Assert.Equal(1, Volatile.Read(ref listenerCalls));
+            Assert.Equal(Options.DefaultName, listenerName);
+            Assert.Same(successfulReload.Options, listenerValue);
+            Assert.Same(successfulReload.Options, monitor.CurrentValue);
+            Assert.Equal(3, controlledValidator.AsyncCalls);
+        }
+
+        private sealed class OptionsTestEventListener : EventListener
+        {
+            private readonly ManualResetEventSlim _eventWritten = new ManualResetEventSlim();
+            private readonly int _expectedEventId;
+
+            internal OptionsTestEventListener(int expectedEventId)
+            {
+                _expectedEventId = expectedEventId;
+            }
+
+            internal string? ExceptionType { get; private set; }
+
+            internal bool Wait(TimeSpan timeout) => _eventWritten.Wait(timeout);
+
+            protected override void OnEventSourceCreated(EventSource eventSource)
+            {
+                if (eventSource.Name == "Microsoft-Extensions-Options")
+                {
+                    EnableEvents(eventSource, EventLevel.LogAlways);
+                }
+            }
+
+            protected override void OnEventWritten(EventWrittenEventArgs eventData)
+            {
+                if (eventData.EventId == _expectedEventId)
+                {
+                    ExceptionType = eventData.Payload is { Count: > 2 } payload
+                        ? payload[2]?.ToString()
+                        : null;
+                    _eventWritten.Set();
+                }
+            }
+
+            public override void Dispose()
+            {
+                base.Dispose();
+                _eventWritten.Dispose();
+            }
+        }
+
+        private sealed class ReloadChangeTokenSource<TOptions> : IOptionsChangeTokenSource<TOptions>
+        {
+            private readonly object _sync = new object();
+            private FakeChangeToken _token = CreateToken();
+
+            internal ReloadChangeTokenSource(string? name) => Name = name;
+
+            public string? Name { get; }
+
+            public IChangeToken GetChangeToken()
+            {
+                lock (_sync)
+                {
+                    return _token;
+                }
+            }
+
+            internal void Trigger()
+            {
+                FakeChangeToken token;
+                lock (_sync)
+                {
+                    token = _token;
+                    _token = CreateToken();
+                }
+
+                token.HasChanged = true;
+                token.InvokeChangeCallback();
+            }
+
+            private static FakeChangeToken CreateToken() => new FakeChangeToken
+            {
+                ActiveChangeCallbacks = true,
+            };
+        }
+
+        private sealed class ControlledAsyncValidator : IAsyncValidateOptions<FakeOptions>, IDisposable
+        {
+            private readonly ConcurrentQueue<ValidationInvocation> _invocations = new();
+            private readonly SemaphoreSlim _entered = new SemaphoreSlim(0);
+            private readonly object _maximumActiveLock = new object();
+            private readonly bool _honorCancellation;
+            private int _activeInvocations;
+            private int _asyncCalls;
+            private int _maximumActiveInvocations;
+            private int _syncCalls;
+
+            internal ControlledAsyncValidator(bool honorCancellation = false) =>
+                _honorCancellation = honorCancellation;
+
+            internal int AsyncCalls => Volatile.Read(ref _asyncCalls);
+
+            internal int MaximumActiveInvocations => Volatile.Read(ref _maximumActiveInvocations);
+
+            internal int SyncCalls => Volatile.Read(ref _syncCalls);
+
+            public ValidateOptionsResult Validate(string? name, FakeOptions options)
+            {
+                Interlocked.Increment(ref _syncCalls);
+                return ValidateOptionsResult.Success;
+            }
+
+            public async Task<ValidateOptionsResult> ValidateAsync(
+                string? name,
+                FakeOptions options,
+                CancellationToken cancellationToken = default)
+            {
+                Interlocked.Increment(ref _asyncCalls);
+                int active = Interlocked.Increment(ref _activeInvocations);
+                lock (_maximumActiveLock)
+                {
+                    if (active > _maximumActiveInvocations)
+                    {
+                        Interlocked.Exchange(ref _maximumActiveInvocations, active);
+                    }
+                }
+
+                var invocation = new ValidationInvocation(name, options, cancellationToken, _honorCancellation);
+                _invocations.Enqueue(invocation);
+                _entered.Release();
+
+                try
+                {
+                    return await invocation.Completion.ConfigureAwait(false);
+                }
+                finally
+                {
+                    invocation.Dispose();
+                    Interlocked.Decrement(ref _activeInvocations);
+                }
+            }
+
+            internal ValidationInvocation TakeNextInvocation(TimeSpan timeout)
+            {
+                Assert.True(_entered.Wait(timeout), "Timed out waiting for an asynchronous validation invocation.");
+                Assert.True(_invocations.TryDequeue(out ValidationInvocation? invocation));
+                return invocation;
+            }
+
+            public void Dispose() => _entered.Dispose();
+        }
+
+        private sealed class ValidationInvocation : IDisposable
+        {
+            private readonly TaskCompletionSource<ValidateOptionsResult> _completion =
+                new TaskCompletionSource<ValidateOptionsResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly CancellationTokenRegistration _cancellationRegistration;
+
+            internal ValidationInvocation(
+                string? name,
+                FakeOptions options,
+                CancellationToken cancellationToken,
+                bool honorCancellation)
+            {
+                Name = name;
+                Options = options;
+                CancellationToken = cancellationToken;
+
+                if (honorCancellation)
+                {
+                    _cancellationRegistration = cancellationToken.Register(
+                        static state => ((ValidationInvocation)state!)._completion.TrySetCanceled(),
+                        this);
+                }
+            }
+
+            internal CancellationToken CancellationToken { get; }
+
+            internal Task<ValidateOptionsResult> Completion => _completion.Task;
+
+            internal string? Name { get; }
+
+            internal FakeOptions Options { get; }
+
+            internal void Cancel() => _completion.SetCanceled();
+
+            internal void Complete(ValidateOptionsResult result) => _completion.SetResult(result);
+
+            internal void Fail(Exception error) => _completion.SetException(error);
+
+            public void Dispose() => _cancellationRegistration.Dispose();
         }
     }
 }

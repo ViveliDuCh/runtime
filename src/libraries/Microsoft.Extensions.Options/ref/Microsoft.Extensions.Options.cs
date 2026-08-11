@@ -8,6 +8,7 @@ namespace Microsoft.Extensions.DependencyInjection
 {
     public static partial class OptionsBuilderExtensions
     {
+        public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnChange<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder, Microsoft.Extensions.Options.OptionsReloadValidationBehavior behavior = Microsoft.Extensions.Options.OptionsReloadValidationBehavior.KeepLastGood, System.Action<string?, System.Exception>? onError = null) where TOptions : class { throw null; }
         public static Microsoft.Extensions.Options.OptionsBuilder<TOptions> ValidateOnStart<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(this Microsoft.Extensions.Options.OptionsBuilder<TOptions> optionsBuilder) where TOptions : class { throw null; }
     }
     public static partial class OptionsServiceCollectionExtensions
@@ -161,6 +162,11 @@ namespace Microsoft.Extensions.Options
     {
         public static readonly string DefaultName;
         public static Microsoft.Extensions.Options.IOptions<TOptions> Create<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TOptions>(TOptions options) where TOptions : class { throw null; }
+    }
+    public enum OptionsReloadValidationBehavior
+    {
+        KeepLastGood = 0,
+        FailReads = 1,
     }
     public partial class OptionsBuilder<TOptions> where TOptions : class
     {

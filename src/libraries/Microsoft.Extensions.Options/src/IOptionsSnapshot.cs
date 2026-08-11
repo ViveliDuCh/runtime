@@ -15,7 +15,9 @@ namespace Microsoft.Extensions.Options
     /// options synchronously. Validators with a usable synchronous <see cref="IValidateOptions{TOptions}.Validate"/>
     /// implementation continue to work. Validators that require asynchronous validation fail through their
     /// synchronous validation result because the default implementation cannot execute or await
-    /// <see cref="IAsyncValidateOptions{TOptions}.ValidateAsync"/>.
+    /// <see cref="IAsyncValidateOptions{TOptions}.ValidateAsync"/>. Enabling asynchronous reload validation through
+    /// <see cref="DependencyInjection.OptionsBuilderExtensions.ValidateOnChange{TOptions}"/>
+    /// does not change these scope-local, synchronous semantics.
     /// </remarks>
     public interface IOptionsSnapshot<[DynamicallyAccessedMembers(Options.DynamicallyAccessedMembers)] out TOptions> :
         IOptions<TOptions>

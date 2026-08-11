@@ -12,9 +12,9 @@ namespace Microsoft.Extensions.Options
     /// <typeparam name="TOptions">The options type.</typeparam>
     /// <remarks>
     /// The default implementation, <see cref="OptionsMonitor{TOptions}"/>, recreates and validates options
-    /// synchronously after change notifications. It does not invoke
-    /// <see cref="IAsyncValidateOptions{TOptions}.ValidateAsync"/> or provide an asynchronous last-known-good
-    /// guarantee.
+    /// synchronously after change notifications unless asynchronous reload validation is enabled through
+    /// <see cref="DependencyInjection.OptionsBuilderExtensions.ValidateOnChange{TOptions}"/>.
+    /// The opt-in reload path publishes only successfully validated values and can retain the last-known-good value.
     /// </remarks>
     public interface IOptionsMonitor<[DynamicallyAccessedMembers(Options.DynamicallyAccessedMembers)] out TOptions>
     {

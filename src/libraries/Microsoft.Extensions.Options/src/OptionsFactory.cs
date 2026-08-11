@@ -21,6 +21,7 @@ namespace Microsoft.Extensions.Options
         private readonly IPostConfigureOptions<TOptions>[] _postConfigures;
         private readonly IValidateOptions<TOptions>[] _validations;
         private readonly bool _hasAsyncValidators;
+        private readonly OptionsReloadValidation<TOptions>? _reloadValidation;
 
         /// <summary>
         /// Initializes a new instance with the specified options configurations.
@@ -49,10 +50,14 @@ namespace Microsoft.Extensions.Options
 
             foreach (IValidateOptions<TOptions> validation in _validations)
             {
+                if (validation is OptionsReloadValidationMarker<TOptions> marker)
+                {
+                    _reloadValidation = marker.ReloadValidation;
+                }
+
                 if (validation is IAsyncValidateOptions<TOptions>)
                 {
                     _hasAsyncValidators = true;
-                    break;
                 }
             }
         }
@@ -61,6 +66,8 @@ namespace Microsoft.Extensions.Options
         // IAsyncValidateOptions<TOptions>, so a synchronous Create may fail for a genuinely-asynchronous validator.
         // Used by startup validation to avoid re-running asynchronous validators synchronously.
         internal bool HasAsyncValidators => _hasAsyncValidators;
+
+        internal OptionsReloadValidation<TOptions>? ReloadValidation => _reloadValidation;
 
         /// <summary>
         /// Returns a configured <typeparamref name="TOptions"/> instance with the given <paramref name="name"/>.

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 
 namespace Microsoft.Extensions.Options
 {
@@ -89,6 +90,31 @@ namespace Microsoft.Extensions.Options
             return false;
         }
 
+        internal void SetValidated(string? name, TOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+
+            _cache[name ?? Options.DefaultName] = new Lazy<TOptions>(
+#if !(NET || NETSTANDARD2_1)
+                () =>
+#endif
+                options);
+        }
+
+        internal void SetException(string? name, Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+
+            ExceptionDispatchInfo dispatchInfo = ExceptionDispatchInfo.Capture(exception);
+            _cache[name ?? Options.DefaultName] = new Lazy<TOptions>(() => Throw(dispatchInfo));
+        }
+
+        private static TOptions Throw(ExceptionDispatchInfo dispatchInfo)
+        {
+            dispatchInfo.Throw();
+            throw new InvalidOperationException();
+        }
+
         /// <summary>
         /// Tries to adds a new option to the cache.
         /// </summary>
@@ -116,11 +142,7 @@ namespace Microsoft.Extensions.Options
                 optionsCache.GetType() == typeof(OptionsCache<TOptions>))
             {
                 // ConcurrentDictionary's indexer atomically adds or replaces the built-in cache entry.
-                optionsCache._cache[name] = new Lazy<TOptions>(
-#if !(NET || NETSTANDARD2_1)
-                    () =>
-#endif
-                    options);
+                optionsCache.SetValidated(name, options);
                 return true;
             }
 
